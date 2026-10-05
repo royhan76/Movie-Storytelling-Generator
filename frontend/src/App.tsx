@@ -117,6 +117,7 @@ function ClipRow({ clip }: { clip: Clip }) {
 export default function App() {
   const [srtFile, setSrtFile] = useState<File | null>(null)
   const [target, setTarget] = useState(15)
+  const [language, setLanguage] = useState<"id" | "en">("id")
   const [job, setJob] = useState<JobStatus | null>(null)
   const [downloading, setDownloading] = useState<DownloadFile | null>(null)
   const [projectId, setProjectId] = useState("")
@@ -149,7 +150,7 @@ export default function App() {
     })
 
     try {
-      const data = await generateStoryboard(srtFile, target, setJob)
+      const data = await generateStoryboard(srtFile, target, language, setJob)
       setProjectId(data.project_id)
       setSb(data.storyboard)
       setErrorTrace("")
@@ -212,7 +213,7 @@ export default function App() {
             Movie Storytelling Generator
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            SRT menjadi naskah voice-over Bahasa Indonesia plus blueprint klip untuk Plan 2.
+            SRT menjadi naskah voice-over Bahasa Indonesia / English US plus blueprint klip untuk Plan 2.
           </p>
         </div>
         <Button
@@ -235,10 +236,10 @@ export default function App() {
       <Card className="mb-8">
         <CardHeader>
           <CardTitle>Input</CardTitle>
-          <CardDescription>Upload subtitle film dan tentukan target durasi narasi.</CardDescription>
+          <CardDescription>Upload subtitle film, tentukan target durasi narasi, dan pilih bahasa naskah.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          <div className="grid gap-5 sm:grid-cols-2">
+          <div className="grid gap-5 sm:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="srt">Subtitle (.srt)</Label>
               <Input
@@ -266,7 +267,23 @@ export default function App() {
                 onChange={(e) => setTarget(Number(e.target.value))}
               />
               <p className="text-xs text-slate-500">
-                Estimasi {Math.round(target * 150).toLocaleString("id-ID")} kata pada 150 kata/menit.
+                Estimasi {Math.round(target * 125).toLocaleString("id-ID")} kata pada 125 kata/menit.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="lang">Bahasa Narasi / Language</Label>
+              <select
+                id="lang"
+                className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                value={language}
+                disabled={busy}
+                onChange={(e) => setLanguage(e.target.value as "id" | "en")}
+              >
+                <option value="id">Bahasa Indonesia</option>
+                <option value="en">English (US)</option>
+              </select>
+              <p className="text-xs text-slate-500">
+                Pilih bahasa naskah & deskripsi visual.
               </p>
             </div>
           </div>

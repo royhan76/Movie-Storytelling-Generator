@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from app.debug_log import log_call
 from app.providers.gemini import GeminiProvider
+from app.schemas.storyboard import Storyboard
 from app.services.clip_validator import solve_durations, validate_section
 from app.services.duration_validator import DEFAULT_WPM, recalc
 from app.services.srt_parser import SrtParser
@@ -72,6 +73,7 @@ class StoryPipeline:
         srt_content: str,
         target_minutes: int,
         source_name: str,
+        language: str = "id",
         progress: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Jalankan pipeline penuh.
@@ -119,7 +121,7 @@ class StoryPipeline:
 
         # ---- Tahap 1: story analysis -------------------------------- #
         emit("analysis", phase="start", chunks=chunk_count)
-        analysis = self.analyzer.analyze(timeline, chunk_size=ANALYSIS_CHUNK)
+        analysis = self.analyzer.analyze(timeline, chunk_size=ANALYSIS_CHUNK, language=language)
         # Jumlah event ikut target: naskah 15 menit tidak mungkin ditulis dari
         # 40 kejadian. Tanpa ini, film 100+ menit jadi naskah < 1 menit.
         max_events = events_for_target(target_minutes, self.wpm)
@@ -169,6 +171,7 @@ class StoryPipeline:
                     revision_hint=self._hint_from(best_report)
                     if best_report and not best_report["ok"]
                     else "",
+                    language=language,
                     progress=lambda i, total: emit(
                         "script", phase="part", part=i, total=total
                     ),
@@ -182,6 +185,7 @@ class StoryPipeline:
                     revision_hint=self._hint_from(best_report)
                     if best_report and not best_report["ok"]
                     else "",
+                    language=language,
                 )
 
             # Log payload mentah SEBELUM build: kalau Gemini mengirim field
@@ -195,9 +199,11 @@ class StoryPipeline:
             )
 
             candidate = self.builder.build(raw)
+            candidate = self._ensure_hook(candidate, compressed, timeline, language=language)
             candidate.project.title = candidate.project.title or compressed.get("title", "")
             candidate.project.source_subtitle = source_name
             candidate.project.target_duration_minutes = target_minutes
+            candidate.project.language = language
 
             seen: set = set()
             all_issues: List[str] = []
@@ -249,6 +255,34 @@ class StoryPipeline:
 
         return {"storyboard": best, "analysis": analysis, "report": best_report}
 
+    def _ensure_hook(
+        self,
+        candidate: Storyboard,
+        compressed: Dict[str, Any],
+        timeline: List[Dict[str, Any]],
+        language: str = "id",
+    ) -> Storyboard:
+        """Pastikan Bagian 0 (Hook Pembuka) minimal 60s ada di urutan pertama storyboard."""
+        has_hook = any(s.section_id == 0 for s in candidate.sections)
+        if has_hook:
+            return candidate
+
+        try:
+            hook_payload = self.provider.generate_hook(compressed, timeline, wpm=self.wpm, language=language)
+            raw_hook = hook_payload.get("section") if isinstance(hook_payload, dict) else None
+            if not isinstance(raw_hook, dict):
+                raw_hook = hook_payload if isinstance(hook_payload, dict) else {}
+            if raw_hook.get("voice_over"):
+                raw_hook = dict(raw_hook)
+                raw_hook["section_id"] = 0
+                raw_hook["clips"] = _limit_clips(raw_hook.get("clips") or [])
+                raw_dict = candidate.model_dump()
+                raw_dict["sections"].insert(0, raw_hook)
+                return self.builder.build(raw_dict)
+        except Exception as exc:
+            log_call("hook-ensure-error", {"error": str(exc)})
+        return candidate
+
     def _write_by_sections(
         self,
         compressed: Dict[str, Any],
@@ -257,6 +291,7 @@ class StoryPipeline:
         parts: int,
         target_words_total: int,
         revision_hint: str = "",
+        language: str = "id",
         progress=None,
     ) -> Dict[str, Any]:
         """Tulis naskah per bagian lalu gabung jadi satu storyboard.
@@ -290,6 +325,21 @@ class StoryPipeline:
                     break
 
         sections: List[Dict[str, Any]] = []
+
+        # ---- Section 0: Hook Pembuka (Minimal 60 Detik) ----
+        try:
+            hook_payload = self.provider.generate_hook(compressed, timeline, wpm=self.wpm, language=language)
+            raw_hook = hook_payload.get("section") if isinstance(hook_payload, dict) else None
+            if not isinstance(raw_hook, dict):
+                raw_hook = hook_payload if isinstance(hook_payload, dict) else {}
+            if raw_hook.get("voice_over"):
+                raw_hook = dict(raw_hook)
+                raw_hook["section_id"] = 0
+                raw_hook["clips"] = _limit_clips(raw_hook.get("clips") or [])
+                sections.append(raw_hook)
+        except Exception:
+            pass
+
         arc = compressed.get("story_arc") or {}
         arc_keys = list(arc.keys())
 
@@ -323,6 +373,7 @@ class StoryPipeline:
                 next_hint=next_hint,
                 part_events=[e for e in chunk if isinstance(e, dict)],
                 revision_hint=revision_hint,
+                language=language,
             )
             if progress:
                 progress(idx + 1, parts)
@@ -336,7 +387,7 @@ class StoryPipeline:
                 continue
 
             raw_section = dict(raw_section)
-            raw_section["section_id"] = len(sections) + 1
+            raw_section["section_id"] = len(sections) if sections and sections[0].get("section_id") == 0 else len(sections) + 1
             # Satu panggilan = satu section; jangan biarkan Gemini menambah
             # bagian lain yang nanti berduplikasi.
             raw_section["clips"] = _limit_clips(raw_section.get("clips") or [])
@@ -349,6 +400,7 @@ class StoryPipeline:
                 "target_duration_minutes": target_minutes,
                 "estimated_voiceover_seconds": target_minutes * 60,
                 "estimated_word_count": target_words_total,
+                "language": language,
             },
             "sections": sections,
             "summary": {"total_sections": len(sections), "total_clips": 0, "total_clip_duration": 0.0},
@@ -410,7 +462,8 @@ def storyboard_to_markdown(sb) -> str:
     lines.append("")
 
     for section in sb.sections:
-        lines.append(f"## Bagian {section.section_id}")
+        sec_title = "Bagian 0 (Hook / Teaser Pembuka)" if section.section_id == 0 else f"Bagian {section.section_id}"
+        lines.append(f"## {sec_title}")
         lines.append("")
         lines.append("### Visual")
         lines.append("")

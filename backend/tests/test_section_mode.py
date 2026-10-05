@@ -55,9 +55,12 @@ class FakeProvider:
         self.cap = per_call_cap
         self.calls = []
 
+    def generate_hook(self, analysis, timeline, wpm=150, language="id", **kwargs):
+        return {}
+
     def generate_section(self, analysis, timeline, *, part, total_parts, words,
                          wpm=150, focus="", prev_hint="", next_hint="",
-                         part_events=None, revision_hint=""):
+                         part_events=None, revision_hint="", language="id", **kwargs):
         self.calls.append({"part": part, "asked": words})
         # Gemini menulis sebesar yang bisa, tidak lebih dari yang diminta.
         wrote = min(words, self.cap)

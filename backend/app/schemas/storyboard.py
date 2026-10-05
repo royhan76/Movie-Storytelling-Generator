@@ -94,6 +94,7 @@ class ProjectInfo(BaseModel):
     target_duration_minutes: int = 15
     estimated_voiceover_seconds: float = 900.0
     estimated_word_count: int = 2250
+    language: str = "id"
 
 
 class Section(BaseModel):

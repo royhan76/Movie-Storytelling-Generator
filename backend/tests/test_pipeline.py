@@ -157,16 +157,22 @@ class StubGemini:
     def is_configured(self):
         return True
 
-    def generate_story_analysis(self, timeline, chunk_size=350):
+    def generate_story_analysis(self, timeline, chunk_size=350, language: str = "id", **kwargs):
         self.calls.append(("analysis", len(timeline)))
         self.chunk_sizes.append(len(timeline))
         return ANALYSIS
 
-    def generate_storytelling(self, analysis, timeline, target_minutes, wpm=150, revision_hint=""):
+    def generate_storytelling(self, analysis, timeline, target_minutes, wpm=150, revision_hint="", language: str = "id", **kwargs):
         self.calls.append(("script", revision_hint))
         raw = json.loads(json.dumps(MESSY_STORYBOARD))
         raw["project"]["target_duration_minutes"] = target_minutes
         return raw
+
+    def generate_hook(self, analysis, timeline, wpm=150, language: str = "id", **kwargs):
+        return {}
+
+    def generate_section(self, analysis, timeline, **kwargs):
+        return {}
 
 
 def main():

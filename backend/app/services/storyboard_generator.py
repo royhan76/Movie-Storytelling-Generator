@@ -70,7 +70,7 @@ class StoryboardBuilder:
 
             sections.append(
                 Section(
-                    section_id=int(raw_section.get("section_id") or pos),
+                    section_id=int(raw_section.get("section_id") if raw_section.get("section_id") is not None else pos),
                     visual=visual or "Visual belum dideskripsikan.",
                     voice_over=voice_over,
                     clips=clips,
@@ -87,6 +87,7 @@ class StoryboardBuilder:
             target_duration_minutes=int(_safe_float(project_raw.get("target_duration_minutes"), 15)),
             estimated_voiceover_seconds=_safe_float(project_raw.get("estimated_voiceover_seconds"), 900),
             estimated_word_count=int(_safe_float(project_raw.get("estimated_word_count"), 2250)),
+            language=str(project_raw.get("language") or "id"),
         )
 
         return Storyboard(project=project, sections=sections, summary=Summary())

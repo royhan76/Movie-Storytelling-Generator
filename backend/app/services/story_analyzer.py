@@ -18,7 +18,7 @@ EVENTS_PER_TARGET_WORD = 0.075
 COMPRESS_MAX_EVENTS = 160
 
 
-def events_for_target(target_minutes: int, wpm: int = 150) -> int:
+def events_for_target(target_minutes: int, wpm: int = 125) -> int:
     """Berapa event yang perlu diteruskan untuk naskah `target_minutes` menit."""
     target_words = max(1, int(target_minutes) * wpm)
     wanted = int(target_words * EVENTS_PER_TARGET_WORD)
@@ -29,8 +29,8 @@ class StoryAnalyzer:
     def __init__(self, provider: GeminiProvider) -> None:
         self.provider = provider
 
-    def analyze(self, timeline: List[Dict[str, Any]], chunk_size: int = 350) -> Dict[str, Any]:
-        return self.provider.generate_story_analysis(timeline, chunk_size=chunk_size)
+    def analyze(self, timeline: List[Dict[str, Any]], chunk_size: int = 350, language: str = "id") -> Dict[str, Any]:
+        return self.provider.generate_story_analysis(timeline, chunk_size=chunk_size, language=language)
 
     @staticmethod
     def compress(analysis: Dict[str, Any], max_events: int = 0) -> Dict[str, Any]:

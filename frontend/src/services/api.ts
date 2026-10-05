@@ -44,11 +44,13 @@ export class GenerateError extends Error {
 export async function generateStoryboard(
   file: File,
   targetDurationMinutes: number,
+  language: string = "id",
   onProgress: (status: JobStatus) => void,
 ): Promise<GenerateResponse> {
   const body = new FormData()
   body.append("subtitle", file)
   body.append("target_duration", String(targetDurationMinutes))
+  body.append("language", language)
 
   const startRes = await fetch(`${API_BASE}/api/jobs`, { method: "POST", body })
   if (!startRes.ok) throw new Error(detailFromResponse(await startRes.text(), startRes.status))
@@ -87,10 +89,12 @@ export async function generateStoryboard(
 export async function generateStoryboardBlocking(
   file: File,
   targetDurationMinutes: number,
+  language: string = "id",
 ): Promise<GenerateResponse> {
   const body = new FormData()
   body.append("subtitle", file)
   body.append("target_duration", String(targetDurationMinutes))
+  body.append("language", language)
 
   const res = await fetch(`${API_BASE}/api/generate`, { method: "POST", body })
   if (!res.ok) throw new Error(detailFromResponse(await res.text(), res.status))

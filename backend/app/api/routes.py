@@ -102,17 +102,19 @@ def health() -> Dict[str, Any]:
 async def generate(
     subtitle: UploadFile = File(...),
     target_duration: int = Form(15),
+    language: str = Form("id"),
 ) -> Dict[str, Any]:
     """Generate blocking (kompatibilitas). Untuk subtitle panjang, pakai /jobs."""
     if target_duration < 1 or target_duration > 180:
         raise HTTPException(400, "Target durasi harus antara 1 sampai 180 menit.")
-    return await _run_generate(subtitle.filename or "film.srt", await subtitle.read(), target_duration)
+    return await _run_generate(subtitle.filename or "film.srt", await subtitle.read(), target_duration, language)
 
 
 @router.post("/jobs")
 async def create_job(
     subtitle: UploadFile = File(...),
     target_duration: int = Form(15),
+    language: str = Form("id"),
 ) -> Dict[str, Any]:
     """Mulai generate di background, kembalikan job_id. Pemanggil poll /jobs/{id}.
 
@@ -142,10 +144,11 @@ async def create_job(
         "started_at": time.time(),
         "source_subtitle": subtitle.filename or "film.srt",
         "target_duration": target_duration,
+        "language": language,
     }
 
     asyncio.create_task(
-        asyncio.to_thread(_job_worker, job_id, subtitle.filename or "film.srt", content, target_duration)
+        asyncio.to_thread(_job_worker, job_id, subtitle.filename or "film.srt", content, target_duration, language)
     )
     return {"success": True, "job_id": job_id}
 
@@ -158,7 +161,7 @@ def job_status(job_id: str) -> Dict[str, Any]:
     return job
 
 
-def _job_worker(job_id: str, filename: str, content: bytes, target_minutes: int) -> None:
+def _job_worker(job_id: str, filename: str, content: bytes, target_minutes: int, language: str = "id") -> None:
     def progress(stage: str, data: Dict[str, Any]) -> None:
         job = _JOBS.get(job_id)
         if not job:
@@ -170,7 +173,7 @@ def _job_worker(job_id: str, filename: str, content: bytes, target_minutes: int)
         job["detail"] = data
 
     try:
-        result = _generate_sync(filename, content, target_minutes, progress)
+        result = _generate_sync(filename, content, target_minutes, language, progress)
     except HTTPException as exc:
         job = _JOBS.get(job_id)
         if job:
@@ -206,14 +209,15 @@ def _job_worker(job_id: str, filename: str, content: bytes, target_minutes: int)
             )
 
 
-async def _run_generate(filename: str, content: bytes, target_minutes: int) -> Dict[str, Any]:
-    return await asyncio.to_thread(_generate_sync, filename, content, target_minutes, None)
+async def _run_generate(filename: str, content: bytes, target_minutes: int, language: str = "id") -> Dict[str, Any]:
+    return await asyncio.to_thread(_generate_sync, filename, content, target_minutes, language, None)
 
 
 def _generate_sync(
     filename: str,
     content: bytes,
     target_minutes: int,
+    language: str = "id",
     progress=None,
 ) -> Dict[str, Any]:
     started = time.time()
@@ -237,7 +241,7 @@ def _generate_sync(
     )
 
     try:
-        result = pipeline.run(srt_text, target_minutes, filename, progress=progress)
+        result = pipeline.run(srt_text, target_minutes, filename, language=language, progress=progress)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:

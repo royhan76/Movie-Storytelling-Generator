@@ -321,8 +321,41 @@ Output JSON valid dengan schema persis:
 subtitle_ref = nomor baris subtitle yang mendukung kejadian itu.
 Pastikan SEMUA timestamp yang kamu tulis benar-benar ada di timeline subtitle."""
 
+    ANALYZE_PROMPT_EN = """You are a movie story analyst.
+The primary input is movie subtitles with timestamps.
+
+Task:
+1. Understand the complete story arc from the subtitles.
+2. Identify main characters and their roles.
+3. Identify the main conflict.
+4. Determine story arc: opening, rising_action, midpoint, climax, ending.
+5. List key events with timestamps from the subtitle timeline.
+6. Do NOT invent events not supported by the subtitles.
+7. CRITICAL LANGUAGE DIRECTIVE: Write all titles, character descriptions, main conflict, story arc, and important events ENTIRELY IN US ENGLISH.
+
+Output valid JSON with exact schema:
+{
+  "title": "movie title in US English",
+  "characters": [{"name": "", "role": ""}],
+  "setting": "movie setting in US English",
+  "main_conflict": "main conflict in US English",
+  "story_arc": {
+    "opening": "",
+    "rising_action": "",
+    "midpoint": "",
+    "climax": "",
+    "ending": ""
+  },
+  "important_events": [
+    {"event": "key event description in US English", "start": "HH:MM:SS", "end": "HH:MM:SS", "subtitle_ref": 0}
+  ]
+}
+
+subtitle_ref = line number of subtitle supporting that event.
+Ensure ALL timestamps you write actually exist in the subtitle timeline."""
+
     def generate_story_analysis(
-        self, timeline: List[Dict[str, Any]], chunk_size: int = 350
+        self, timeline: List[Dict[str, Any]], chunk_size: int = 350, language: str = "id"
     ) -> Dict[str, Any]:
         """Analisis seluruh subtitle. Subtitle panjang dipecah per chunk lalu digabung."""
         if not timeline:
@@ -330,26 +363,27 @@ Pastikan SEMUA timestamp yang kamu tulis benar-benar ada di timeline subtitle.""
 
         chunks = [timeline[i : i + chunk_size] for i in range(0, len(timeline), chunk_size)]
         if len(chunks) == 1:
-            return self._call(self._render_prompt(chunks[0]), temperature=0.3, label="analysis")
+            return self._call(self._render_prompt(chunks[0], language=language), temperature=0.3, label="analysis")
 
         partials: List[Dict[str, Any]] = []
         for idx, chunk in enumerate(chunks):
             partials.append(
                 self._call(
-                    self._render_prompt(chunk, chunk_label=f"Bagian {idx + 1} dari {len(chunks)}"),
+                    self._render_prompt(chunk, chunk_label=f"Bagian {idx + 1} dari {len(chunks)}", language=language),
                     temperature=0.3,
                     label=f"analysis-chunk{idx + 1}",
                 )
             )
 
-        return self._merge_partials(partials)
+        return self._merge_partials(partials, language=language)
 
-    def _render_prompt(self, chunk: List[Dict[str, Any]], chunk_label: str = "") -> str:
+    def _render_prompt(self, chunk: List[Dict[str, Any]], chunk_label: str = "", language: str = "id") -> str:
         lines = []
         for cue in chunk:
             lines.append(f'[{cue["i"]}] {cue["start"]} {cue["text"]}')
         header = f"({chunk_label})\n\n" if chunk_label else ""
-        return f"{header}SUBTITLE:\n" + "\n".join(lines) + "\n\n" + self.ANALYZE_PROMPT
+        prompt_text = self.ANALYZE_PROMPT_EN if language == "en" else self.ANALYZE_PROMPT
+        return f"{header}SUBTITLE:\n" + "\n".join(lines) + "\n\n" + prompt_text
 
     MERGE_PROMPT = """Berikut analisis parsial dari beberapa bagian subtitle film yang sama.
 Gabungkan menjadi SATU analisis cerita yang konsisten dan lengkap, tanpa duplikasi.
@@ -363,10 +397,23 @@ PENTING:
 - Output JSON valid dengan schema yang sama seperti input.
 """
 
-    def _merge_partials(self, partials: List[Dict[str, Any]]) -> Dict[str, Any]:
+    MERGE_PROMPT_EN = """Here are partial story analyses from different sections of the same movie subtitle.
+Combine them into ONE consistent and complete story analysis without duplicates.
+
+{partials}
+
+CRITICAL INSTRUCTIONS:
+- Duplicate events must be merged.
+- story_arc must follow the ACTUAL movie plot flow.
+- Write ALL fields (title, characters, setting, main_conflict, story_arc, important_events) ENTIRELY IN US ENGLISH.
+- Output valid JSON matching the exact same schema as input.
+"""
+
+    def _merge_partials(self, partials: List[Dict[str, Any]], language: str = "id") -> Dict[str, Any]:
         compact = json.dumps(partials, ensure_ascii=False)
+        merge_prompt = self.MERGE_PROMPT_EN if language == "en" else self.MERGE_PROMPT
         merged = self._call(
-            self.MERGE_PROMPT.format(partials=compact), temperature=0.25, label="analysis-merge"
+            merge_prompt.format(partials=compact), temperature=0.25, label="analysis-merge"
         )
         merged["important_events"] = _dedupe_events(merged.get("important_events", []))
         return merged
@@ -407,13 +454,55 @@ ATURAN OUTPUT:
 - Output HARUS JSON valid, tanpa teks lain.
 - Ikuti schema persis di bawah."""
 
+    def get_script_rules(self, language: str = "id") -> str:
+        if language == "en":
+            return """You are a professional movie story scriptwriter and storyboard planner.
+
+CRITICAL LANGUAGE DIRECTIVE:
+THE USER REQUESTED US ENGLISH OUTPUT.
+ALL NARRATION VOICE-OVER SCRIPTS (`voice_over`), SECTION VISUAL DESCRIPTIONS (`visual`), PROJECT TITLES (`title`), AND CLIP VISUAL HINTS (`visual_hint`) MUST BE WRITTEN 100% IN US ENGLISH.
+DO NOT OUTPUT ANY INDONESIAN WORDS OR SENTENCES IN `voice_over`, `visual`, `title`, OR `visual_hint`.
+
+MAIN RULES:
+1. Understand the full storyline from the story analysis.
+2. Focus on key events rather than just reading subtitles.
+3. DO NOT change the story chronology.
+4. DO NOT invent events not supported by the subtitles.
+5. Write all voice-over scripts, visual descriptions, titles, and hints in US English.
+6. Fast-paced, dramatic, emotional, tense narrator style — suitable for movie recap / storytelling videos.
+7. Avoid too much direct character dialogue; write as an engaging storyteller.
+8. Voice-over must be rich, detailed, and match the target duration.
+
+CLIP BLUEPRINT RULES:
+1. Every clip has: beat, start, src, trx, out.
+2. beat = lowercase-kebab-case (e.g., walk, run, confront, silent-stare, weapon-aim, embrace, child, photo-memory).
+3. start MUST be taken from subtitle timestamps (HH:MM:SS).
+4. src = source duration, MUST be 0 < src <= 3.0. NEVER exceed 3 seconds.
+5. trx can only be: baref, fz12, s65, s50, s35.
+6. out = duration result AFTER transform:
+   - baref -> out = src
+   - fz12  -> out = 1.2 (freeze frame)
+   - s65   -> out = src / 0.65
+   - s50   -> out = src / 0.50
+   - s35   -> out = src / 0.35
+7. Pick visual moments that directly support the voice-over sentence.
+8. Avoid repeating timestamps.
+9. Visuals follow the narration flow, not a random clip list.
+10. Clip quantity matches story density (action parts more clips, quiet parts fewer).
+
+OUTPUT RULES:
+- Output MUST be valid JSON, with no markdown fences or extra text.
+- Follow the exact schema below."""
+        return self.SCRIPT_RULES
+
     def generate_storytelling(
         self,
         analysis: Dict[str, Any],
         timeline: List[Dict[str, Any]],
         target_minutes: int,
-        wpm: int = 150,
+        wpm: int = 125,
         revision_hint: str = "",
+        language: str = "id",
     ) -> Dict[str, Any]:
         if not self.is_configured():
             raise RuntimeError("Gemini API Key belum dikonfigurasi.")
@@ -423,6 +512,10 @@ ATURAN OUTPUT:
 
         timeline_ref = "\n".join(f'[{c["i"]}] {c["start"]} {c["text"]}' for c in timeline)
 
+        visual_desc = "visual description for this section in US English" if language == "en" else "deskripsi visual bagian ini"
+        vo_desc = "narration voice-over script for this section in US English" if language == "en" else "naskah narasi bagian ini"
+        hint_desc = "what is likely visible at this point" if language == "en" else "apa yang kemungkinan terlihat di titik ini"
+
         schema = {
             "project": {
                 "title": analysis.get("title", ""),
@@ -430,12 +523,13 @@ ATURAN OUTPUT:
                 "target_duration_minutes": target_minutes,
                 "estimated_voiceover_seconds": target_seconds,
                 "estimated_word_count": target_words,
+                "language": language,
             },
             "sections": [
                 {
                     "section_id": 1,
-                    "visual": "deskripsi visual bagian ini",
-                    "voice_over": "naskah narasi bagian ini",
+                    "visual": visual_desc,
+                    "voice_over": vo_desc,
                     "clips": [
                         {
                             "clip_id": 1,
@@ -445,7 +539,7 @@ ATURAN OUTPUT:
                             "trx": "baref",
                             "out": 2.0,
                             "subtitle_ref": 1,
-                            "visual_hint": "apa yang kemungkinan terlihat di titik ini",
+                            "visual_hint": hint_desc,
                         }
                     ],
                 }
@@ -460,14 +554,35 @@ ATURAN OUTPUT:
                 + revision_hint
                 + "\n"
             )
-            # Prompt penuh bisa ribuan karakter; log_call cuma menyimpan 1500
-            # karakter pertama, jadi hint revisi ini tidak akan terlihat di log.
-            # Catat terpisah supaya bisa dibaca pas debugging.
             log_call(f"revision-hint-{_hint_tag(revision_hint)}", {"hint": revision_hint})
 
         per_section_words = max(60, target_words // max(1, self.SCRIPT_MIN_SECTIONS))
 
-        prompt = f"""{self.SCRIPT_RULES}
+        if language == "en":
+            prompt = f"""{self.get_script_rules(language=language)}
+
+TARGET DURATION (CRITICAL REQUIREMENTS):
+- target narration duration: {target_minutes} minutes = {target_seconds} seconds
+- total voice-over word count: {target_words} words (+-15%)
+- number of sections: around {self.SCRIPT_MIN_SECTIONS}-{self.SCRIPT_MAX_SECTIONS}
+- voice-over words per section: around {per_section_words} words
+
+CRITICAL LANGUAGE & CONTENT RULES:
+- ALL VOICE-OVER SCRIPTS, VISUAL DESCRIPTIONS, TITLES, AND HINTS MUST BE WRITTEN 100% IN US ENGLISH.
+- This is NOT a brief summary. The voice-over MUST be complete and fill {target_seconds} seconds.
+- Write full engaging storytelling: setup, complication, climax, resolution.
+
+STORY ANALYSIS:
+{json.dumps(analysis, ensure_ascii=False, indent=2)}
+
+SUBTITLE TIMELINE:
+{timeline_ref}
+{revision_block}
+OUTPUT SCHEMA:
+{json.dumps(schema, ensure_ascii=False, indent=2)}
+"""
+        else:
+            prompt = f"""{self.get_script_rules(language=language)}
 
 TARGET DURASI (WAJIB DIPENUHI):
 - target durasi narasi: {target_minutes} menit = {target_seconds} detik
@@ -503,9 +618,6 @@ SCHEMA OUTPUT:
     # ------------------------------------------------------------------ #
     # Tahap 2b — menulis naskah per bagian (chunking)
     # ------------------------------------------------------------------ #
-    # Pengamatan dari run nyata: satu panggilan Gemini mentok di ~900 kata.
-    # Target 15 menit butuh 2250 kata. Jadi naskah harus ditulis per bagian,
-    # lalu disambung -- bukan satu prompt raksasa yang hasilnya dipotong diam-diam.
     SECTION_PROMPT = """Kamu adalah penulis storytelling film. Tulis SATU BAGIAN dari naskah.
 
 {SCRIPT_RULES}
@@ -540,6 +652,40 @@ TIMELINE SUBTITLE (timestamp yang boleh dipakai untuk `start`):
 SCHEMA OUTPUT:
 {schema}"""
 
+    SECTION_PROMPT_EN = """You are a movie storytelling scriptwriter. Write ONE SECTION of the script.
+
+{SCRIPT_RULES}
+
+THIS SECTION:
+- Section {part} of {total} in the full script.
+- Focus: {focus}
+- Tone of previous section: {prev_hint}
+- Tone of next section: {next_hint}
+
+QUANTITATIVE RULES (STRICT):
+- Voice-over for this section: {words} words (tolerance +-{word_tol}%)
+- CHARACTER LIMIT: Voice-over MAXIMUM 3000 characters (including spaces). DO NOT EXCEED 3000 CHARACTERS.
+- Target reading duration: {seconds} seconds @ {wpm} words/minute
+- WORD COUNT IS AN EXACT TARGET. Write until close to that number.
+- CRITICAL DIRECTIVE: WRITE ALL VOICE-OVER SCRIPTS AND VISUAL DESCRIPTIONS 100% IN US ENGLISH.
+{parts_hint}
+
+TOTAL VISUAL DURATION FOR THIS SECTION:
+- Sum all `out` values of clips in this section.
+- Must be close to {seconds} seconds (+-15%).
+- Ensure enough clips (e.g. {target_clips} clips or more) so total duration matches voice-over.
+
+DO NOT repeat other sections. Focus ONLY on events assigned to this section.
+
+EVENTS SUPPORTING THIS SECTION:
+{events}
+
+SUBTITLE TIMELINE:
+{timeline_ref}
+
+OUTPUT SCHEMA:
+{schema}"""
+
     def generate_section(
         self,
         analysis: Dict[str, Any],
@@ -548,19 +694,16 @@ SCHEMA OUTPUT:
         part: int,
         total_parts: int,
         words: int,
-        wpm: int = 150,
+        wpm: int = 125,
         focus: str = "",
         prev_hint: str = "",
         next_hint: str = "",
         events: Optional[List[Dict[str, Any]]] = None,
         part_events: Optional[List[Dict[str, Any]]] = None,
         revision_hint: str = "",
+        language: str = "id",
     ) -> Dict[str, Any]:
-        """Tulis satu bagian naskah dengan jatah kata spesifik.
-
-        Ini yang menutup celah "~900 kata per panggilan": tiap bagian punya
-        target kata sendiri, jadi total naskah bisa jauh melebihi batas itu.
-        """
+        """Tulis satu bagian naskah dengan jatah kata spesifik."""
         if not self.is_configured():
             raise RuntimeError("Gemini API Key belum dikonfigurasi.")
 
@@ -571,9 +714,8 @@ SCHEMA OUTPUT:
         use_events = part_events if part_events is not None else (events or [])
         events_ref = "\n".join(
             f'- {e.get("start", "?")} : {str(e.get("event", ""))[:180]}' for e in use_events
-        ) or "(tidak ada event khusus — pakai timeline)"
+        ) or ("(no specific events — use timeline)" if language == "en" else "(tidak ada event khusus — pakai timeline)")
 
-        # Timeline dipangkas ke rentang bagian ini supaya prompt tidak blunder.
         if use_events:
             starts = [str(e.get("start", "")) for e in use_events if e.get("start")]
             if starts:
@@ -583,19 +725,30 @@ SCHEMA OUTPUT:
 
         timeline_ref = "\n".join(f'[{c["i"]}] {c["start"]} {c["text"]}' for c in timeline[:400])
 
-        parts_hint = (
-            "ELABORASI CERITA: Jangan hanya meringkas! Tulis variasi narasi yang kaya: deskripsi situasi, emosi tokoh, "
-            "dan konsekuensi tiap kejadian. Panjangkan naskah dengan detail mendalam."
-            if total_parts > 1
-            else "Tulis narasi lengkap dari awal sampai akhir cerita dengan deskripsi yang mendalam."
-        )
+        if language == "en":
+            parts_hint = (
+                "STORY ELABORATION: Do not just summarize! Write rich narrative descriptions of situation, emotions, and consequences."
+                if total_parts > 1
+                else "Write full narrative from start to finish with deep description."
+            )
+        else:
+            parts_hint = (
+                "ELABORASI CERITA: Jangan hanya meringkas! Tulis variasi narasi yang kaya: deskripsi situasi, emosi tokoh, "
+                "dan konsekuensi tiap kejadian. Panjangkan naskah dengan detail mendalam."
+                if total_parts > 1
+                else "Tulis narasi lengkap dari awal sampai akhir cerita dengan deskripsi yang mendalam."
+            )
+
+        visual_desc = "visual description for this section in US English" if language == "en" else "deskripsi visual bagian ini"
+        vo_desc = f"narration voice-over script for this section in US English, around {words} words" if language == "en" else f"naskah narasi bagian ini, sekitar {words} kata"
+        hint_desc = "what is visible at this point" if language == "en" else "apa yang terlihat di titik ini"
 
         schema = json.dumps(
             {
                 "section": {
                     "section_id": part,
-                    "visual": "deskripsi visual bagian ini",
-                    "voice_over": f"naskah narasi bagian ini, sekitar {words} kata",
+                    "visual": visual_desc,
+                    "voice_over": vo_desc,
                     "clips": [
                         {
                             "clip_id": 1,
@@ -605,7 +758,7 @@ SCHEMA OUTPUT:
                             "trx": "baref",
                             "out": 2.0,
                             "subtitle_ref": 1,
-                            "visual_hint": "apa yang terlihat di titik ini",
+                            "visual_hint": hint_desc,
                         }
                     ],
                 }
@@ -620,13 +773,14 @@ SCHEMA OUTPUT:
                 "\nREVISI (wajib diperbaiki):\n" + revision_hint + "\n"
             )
 
-        prompt = self.SECTION_PROMPT.format(
-            SCRIPT_RULES=self.SCRIPT_RULES,
+        prompt_template = self.SECTION_PROMPT_EN if language == "en" else self.SECTION_PROMPT
+        prompt = prompt_template.format(
+            SCRIPT_RULES=self.get_script_rules(language=language),
             part=part,
             total=total_parts,
-            focus=focus or f"bagian ke-{part} dari cerita",
-            prev_hint=prev_hint or "(ini bagian pertama)",
-            next_hint=next_hint or "(ini bagian terakhir)",
+            focus=focus or (f"part {part} of story" if language == "en" else f"bagian ke-{part} dari cerita"),
+            prev_hint=prev_hint or ("(this is the first part)" if language == "en" else "(ini bagian pertama)"),
+            next_hint=next_hint or ("(this is the last part)" if language == "en" else "(ini bagian terakhir)"),
             words=words,
             word_tol=word_tol,
             seconds=seconds,
@@ -638,6 +792,108 @@ SCHEMA OUTPUT:
             schema=schema,
         ) + revision_block
         return self._call(prompt, temperature=0.5, label=f"section-part{part}")
+
+    HOOK_PROMPT = """Kamu adalah master penulis Hook video storytelling / recap film kelas dunia (viral retention hook creator).
+
+{SCRIPT_RULES}
+
+TUGAS UTAMA:
+Buat BAGIAN 0 (HOOK PEMBUKA) berdurasi MINIMAL 60 DETIK (~160-250 kata).
+Hook ini wajib dipasang di paling awal video sebelum cerita utama dimulai, khusus untuk meledakkan rasa penasaran penonton (Stop-Scrolling Retention Hook).
+
+FORMULA NASKAH HOOK POWERFUL & DRAMATIS (WAJIB MINIMAL 60 DETIK / 160 KATA):
+1. PUNCHLINE EMOSIONAL & KONTRAS MELEDAK: Langsung lempar penonton ke puncak bahaya/klimaks paling mengerikan atau pertaruhan terbesar karakter utama.
+2. TEKNIK IN MEDIA RES: Jangan mulai dari awal cerita! Ceritakan pertaruhan nyawa, rahasia kelam, atau kehancuran yang akan datang.
+3. PERTANYAAN/PERNYATAAN MEMIKAT (WAH FACTOR): Buat penonton terperangah dengan kontras ekstrem.
+4. NADA BICARA: Tegang, cepat, dramatis, penuh intrik, dan bikin merinding.
+5. PANJANG NARASI: WAJIB minimal 160 kata (sekitar 60-75 detik pembacaan).
+
+ATURAN KLIP VISUAL HOOK (HIGH-PACED TEASER):
+1. Wajib hasilkan MINIMAL 20-35 KLIP visual berdurasi pendek dan sangat cepat (1.0s - 2.5s).
+2. Ambil kandidat timestamp `start` HANYA dari momen-momen puncak pertarungan, ledakan, ancaman, atau adegan paling ikonik/tegang dari timeline subtitle.
+3. Total durasi visual (`out`) HARUS menyamai atau melebihi 60 detik.
+
+TIMELINE SUBTITLE (timestamp yang boleh dipakai untuk `start`):
+{timeline_ref}
+
+SCHEMA OUTPUT:
+{schema}"""
+
+    HOOK_PROMPT_EN = """You are a master viral video storytelling hook creator.
+
+{SCRIPT_RULES}
+
+PRIMARY TASK:
+Create SECTION 0 (OPENING HOOK) with a MINIMUM DURATION OF 60 SECONDS (~160-250 words).
+This hook MUST be placed at the very beginning of the video before the main story starts (Stop-Scrolling Retention Hook).
+CRITICAL: WRITE ALL NARRATION & VISUAL DESCRIPTIONS ENTIRELY IN US ENGLISH.
+
+POWERFUL & DRAMATIC HOOK FORMULA (MINIMUM 60 SECONDS / 160+ WORDS):
+1. EXPLOSIVE EMOTIONAL PUNCHLINE & CONTRAST: Throw audience straight into the peak of danger/climax or protagonist's highest stakes.
+2. IN MEDIA RES TECHNIQUE: Do NOT start at the beginning! Tell the life-or-death stakes, dark secrets, or impending disaster.
+3. CAPTIVATING QUESTION / STATEMENT (WAH FACTOR): Stun audience with extreme contrast.
+4. TONE: Tense, fast-paced, dramatic, chilling, intriguing.
+5. NARRATION LENGTH: MINIMUM 160 words (~60-75 seconds reading time).
+
+VISUAL CLIP BLUEPRINT FOR HOOK (HIGH-PACED TEASER):
+1. MUST produce AT LEAST 20-35 short, fast visual clips (1.0s - 2.5s).
+2. Take timestamp `start` ONLY from peak fight, explosion, threat, or iconic tense moments in subtitle timeline.
+3. Total visual duration (`out`) MUST equal or exceed 60 seconds.
+
+SUBTITLE TIMELINE:
+{timeline_ref}
+
+OUTPUT SCHEMA:
+{schema}"""
+
+    def generate_hook(
+        self,
+        analysis: Dict[str, Any],
+        timeline: List[Dict[str, Any]],
+        wpm: int = 125,
+        language: str = "id",
+    ) -> Dict[str, Any]:
+        """Generate Bagian 0 (Hook) minimal 60 detik di paling awal naskah."""
+        if not self.is_configured():
+            raise RuntimeError("Gemini API Key belum dikonfigurasi.")
+
+        timeline_ref = "\n".join(f'[{c["i"]}] {c["start"]} {c["text"]}' for c in timeline[:600])
+
+        visual_desc = "Opening 60-second visual teaser, highly tense and captivating" if language == "en" else "Teaser visual pembuka berdurasi 60 detik yang sangat tegang dan memikat penonton"
+        vo_desc = "Opening viral hook narration script (minimum 160 words / 60+ seconds) in US English..." if language == "en" else "Naskah narasi hook pembuka minimal 150 kata berdurasi 60 detik yang memicu penasaran..."
+        hint_desc = "climax fight / most tense scene" if language == "en" else "adegan klimaks / pertarungan paling tegang"
+
+        schema = json.dumps(
+            {
+                "section": {
+                    "section_id": 0,
+                    "visual": visual_desc,
+                    "voice_over": vo_desc,
+                    "clips": [
+                        {
+                            "clip_id": 1,
+                            "beat": "confront",
+                            "start": "00:05:00",
+                            "src": 2.0,
+                            "trx": "baref",
+                            "out": 2.0,
+                            "subtitle_ref": 1,
+                            "visual_hint": hint_desc,
+                        }
+                    ],
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+        prompt_template = self.HOOK_PROMPT_EN if language == "en" else self.HOOK_PROMPT
+        prompt = prompt_template.format(
+            SCRIPT_RULES=self.get_script_rules(language=language),
+            timeline_ref=timeline_ref,
+            schema=schema,
+        )
+        return self._call(prompt, temperature=0.5, label="section-hook")
 
     def revise_storyboard(
         self,

@@ -7,7 +7,7 @@ from typing import Dict, List, Tuple
 
 from app.schemas.storyboard import Storyboard
 
-DEFAULT_WPM = int(os.getenv("DEFAULT_WPM", "150"))
+DEFAULT_WPM = int(os.getenv("DEFAULT_WPM", "125"))
 
 
 def word_count(text: str) -> int:
