@@ -1,0 +1,23 @@
+============================================================
+  ALUR CERITA - PLAN 1
+============================================================
+
+[1/4] Membersihkan proses lama di port 8012 dan 5173...
+[2/4] Dependency frontend sudah ada.
+[3/4] Menjalankan test backend...
+   OK - 4 modul test hijau.
+[4/4] Menyalakan backend pada port 8012...
+   backend SIAP - http://127.0.0.1:8012/docs
+    Menyalakan frontend pada port 5173...
+
+============================================================
+  SIAP.
+
+  UI      : http://localhost:5173
+  Backend : http://127.0.0.1:8012/docs
+  Output  : E:\PROJECT\web\alur_cerita\projects
+
+  Jangan tutup jendela ALUR-BACKEND / ALUR-FRONTEND.
+  Stop dengan STOP_ALUR_CERITA.bat
+============================================================
+

@@ -1,0 +1,246 @@
+{
+  "project": {
+    "title": "Beban Tak Terlihat: Sisi Gelap Penegakan Hukum",
+    "source_subtitle": "test_srt_72b151bbba67.srt",
+    "target_duration_minutes": 2,
+    "estimated_voiceover_seconds": 96.4,
+    "estimated_word_count": 241
+  },
+  "sections": [
+    {
+      "section_id": 1,
+      "visual": "Penyidik berdiri dalam keheningan, menatap berkas kasus dengan ekspresi lelah di bawah lampu temaram.",
+      "voice_over": "Mereka yang menghabiskan hidupnya menatap jurang kegelapan memikul beban berat yang tak terlihat. Saat kita asyik menonton dokumenter kriminal dan berfokus pada pikiran yang bengkok serta petunjuk yang rumit, ada sisi sunyi dari cerita yang jarang menjadi berita utama. Ini adalah tentang pengikisan jiwa secara perlahan dari mereka yang memakai lencana demi melindungi kita semua.",
+      "clips": [
+        {
+          "clip_id": 1,
+          "beat": "silent-stare",
+          "start": "00:00:00",
+          "src": 2.6,
+          "trx": "s65",
+          "out": 4.0
+        },
+        {
+          "clip_id": 2,
+          "beat": "photo-memory",
+          "start": "00:00:06",
+          "src": 3.0,
+          "trx": "s50",
+          "out": 6.0
+        },
+        {
+          "clip_id": 3,
+          "beat": "silent-stare",
+          "start": "00:00:12",
+          "src": 3.0,
+          "trx": "s50",
+          "out": 6.0
+        },
+        {
+          "clip_id": 4,
+          "beat": "walk",
+          "start": "00:00:18",
+          "src": 2.8,
+          "trx": "s35",
+          "out": 8.0
+        }
+      ],
+      "clip_count": 4,
+      "total_clip_duration": 24.0
+    },
+    {
+      "section_id": 2,
+      "visual": "Petugas forensik bekerja dengan sangat teliti di bawah garis polisi, mengabaikan ketegangan di sekitar.",
+      "voice_over": "Ketika rutinitas harianmu melibatkan proses penanganan momen-momen terburuk manusia, otakmu akan mulai berubah. Otak manusia tidak dirancang untuk menyerap kekerasan tanpa akhir tanpa konsekuensi. Para penyidik melangkah masuk ke tempat kejadian perkara yang meninggalkan bekas luka permanen di ingatan mereka, memaksa diri mereka tetap dingin demi tugas.",
+      "clips": [
+        {
+          "clip_id": 5,
+          "beat": "walk",
+          "start": "00:00:24",
+          "src": 3.0,
+          "trx": "s50",
+          "out": 6.0
+        },
+        {
+          "clip_id": 6,
+          "beat": "silent-stare",
+          "start": "00:00:32",
+          "src": 2.6,
+          "trx": "s65",
+          "out": 4.0
+        },
+        {
+          "clip_id": 7,
+          "beat": "confront",
+          "start": "00:00:41",
+          "src": 2.8,
+          "trx": "s35",
+          "out": 8.0
+        },
+        {
+          "clip_id": 8,
+          "beat": "silent-stare",
+          "start": "00:00:47",
+          "src": 3.0,
+          "trx": "s50",
+          "out": 6.0
+        }
+      ],
+      "clip_count": 4,
+      "total_clip_duration": 24.0
+    },
+    {
+      "section_id": 3,
+      "visual": "Seorang detektif duduk sendirian di rumahnya yang gelap, menatap ke luar jendela dengan cemas.",
+      "voice_over": "Namun, trauma yang ditekan itu tidak pernah benar-benar hilang begitu saja. Ia tetap membayangi di jam-jam sunyi setelah giliran kerja berakhir, mewujud dalam malam-malam tanpa tidur dan kemarahan yang tiba-tiba. Hubungan pernikahan merenggang dan persahabatan hancur, hingga akhirnya melahirkan kejenuhan profesional yang sangat mendalam dan melelahkan.",
+      "clips": [
+        {
+          "clip_id": 9,
+          "beat": "silent-stare",
+          "start": "00:00:52",
+          "src": 3.0,
+          "trx": "s50",
+          "out": 6.0
+        },
+        {
+          "clip_id": 10,
+          "beat": "photo-memory",
+          "start": "00:01:01",
+          "src": 2.8,
+          "trx": "s35",
+          "out": 8.0
+        },
+        {
+          "clip_id": 11,
+          "beat": "silent-stare",
+          "start": "00:01:13",
+          "src": 2.6,
+          "trx": "s65",
+          "out": 4.0
+        }
+      ],
+      "clip_count": 3,
+      "total_clip_duration": 18.0
+    },
+    {
+      "section_id": 4,
+      "visual": "Petugas memindai kerumunan orang di jalanan dengan waspada, tidak mampu menghentikan insting kerjanya.",
+      "voice_over": "Mereka menjadi hipervigilan, terus memindai keramaian untuk mencari bahaya tanpa bisa mematikan insting penyelidik tersebut. Meskipun lembaga penegak hukum mulai menyadari pentingnya dukungan kesehatan mental, stigma emosional tetap menjadi dinding penghalang yang kokoh. Mereka takut mencari bantuan karena khawatir dianggap lemah atau merusak karier mereka.",
+      "clips": [
+        {
+          "clip_id": 12,
+          "beat": "confront",
+          "start": "00:01:24",
+          "src": 2.8,
+          "trx": "s35",
+          "out": 8.0
+        },
+        {
+          "clip_id": 13,
+          "beat": "silent-stare",
+          "start": "00:01:33",
+          "src": 3.0,
+          "trx": "s50",
+          "out": 6.0
+        },
+        {
+          "clip_id": 14,
+          "beat": "walk",
+          "start": "00:01:44",
+          "src": 2.6,
+          "trx": "s65",
+          "out": 4.0
+        }
+      ],
+      "clip_count": 3,
+      "total_clip_duration": 18.0
+    },
+    {
+      "section_id": 5,
+      "visual": "Detektif dan ahli forensik berdiri berdampingan di bawah lampu jalan, menatap kota yang tenang.",
+      "voice_over": "Memahami dunia kriminal yang sesungguhnya berarti kita harus melihat melampaui detail gelap berkas kasus. Kita harus mengakui biaya kemanusiaan nyata yang dibayar oleh mereka yang mencari kebenaran. Para detektif dan ahli forensik bekerja dalam bayang-bayang agar dunia bisa hidup dalam terang, meski kegelapan itu terus menempel pada mereka.",
+      "clips": [
+        {
+          "clip_id": 15,
+          "beat": "silent-stare",
+          "start": "00:02:02",
+          "src": 3.0,
+          "trx": "s50",
+          "out": 6.0
+        },
+        {
+          "clip_id": 16,
+          "beat": "walk",
+          "start": "00:02:10",
+          "src": 2.8,
+          "trx": "s35",
+          "out": 8.0
+        },
+        {
+          "clip_id": 17,
+          "beat": "photo-memory",
+          "start": "00:02:22",
+          "src": 2.6,
+          "trx": "s65",
+          "out": 4.0
+        },
+        {
+          "clip_id": 18,
+          "beat": "silent-stare",
+          "start": "00:02:30",
+          "src": 3.0,
+          "trx": "s50",
+          "out": 6.0
+        }
+      ],
+      "clip_count": 4,
+      "total_clip_duration": 24.0
+    }
+  ],
+  "summary": {
+    "total_sections": 5,
+    "total_clips": 18,
+    "total_clip_duration": 108.0
+  },
+  "report": {
+    "est_vo_sec": 96.4,
+    "total_clip_out": 108.0,
+    "diff_sec": 11.6,
+    "diff_pct": 12.0,
+    "ok": true,
+    "word_count": 241,
+    "issues": [
+      "section 1: start 00:00:00.000 -> 00:00:00 (di luar timeline)",
+      "section 1: start 00:00:06.380 -> 00:00:06 (di luar timeline)",
+      "section 1: start 00:00:12.140 -> 00:00:12 (di luar timeline)",
+      "section 1: start 00:00:17.900 -> 00:00:18 (di luar timeline)",
+      "section 2: start 00:00:23.660 -> 00:00:24 (di luar timeline)",
+      "section 2: start 00:00:32.300 -> 00:00:32 (di luar timeline)",
+      "section 2: start 00:00:40.940 -> 00:00:41 (di luar timeline)",
+      "section 2: start 00:00:46.700 -> 00:00:47 (di luar timeline)",
+      "section 3: start 00:00:52.460 -> 00:00:52 (di luar timeline)",
+      "section 3: start 00:01:01.100 -> 00:01:01 (di luar timeline)",
+      "section 3: start 00:01:12.620 -> 00:01:13 (di luar timeline)",
+      "section 4: start 00:01:24.140 -> 00:01:24 (di luar timeline)",
+      "section 4: start 00:01:32.780 -> 00:01:33 (di luar timeline)",
+      "section 4: start 00:01:44.300 -> 00:01:44 (di luar timeline)",
+      "section 5: start 00:02:01.580 -> 00:02:02 (di luar timeline)",
+      "section 5: start 00:02:10.220 -> 00:02:10 (di luar timeline)",
+      "section 5: start 00:02:21.740 -> 00:02:22 (di luar timeline)",
+      "section 5: start 00:02:30.380 -> 00:02:30 (di luar timeline)"
+    ],
+    "attempts": 2,
+    "solver": {
+      "adjusted": 0,
+      "target_seconds": 96.4,
+      "final_diff_pct": 12.0
+    },
+    "warnings": [],
+    "cue_count": 55,
+    "timeline": [
+      0.0,
+      159.64
+    ],
+    "elapsed_sec": 119.8
+  }
+}

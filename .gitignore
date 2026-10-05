@@ -1,0 +1,30 @@
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Node Modules & Build Outputs
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend-ts/
+
+# Environment Variables
+.env
+backend/.env
+frontend/.env
+
+# Temporary / Debug Data
+debug_log/
+backend/debug_log/
+projects/
+*.srt
+test_run.py
+test_post.py
+test_sakamoto.py
