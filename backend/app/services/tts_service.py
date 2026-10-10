@@ -122,6 +122,112 @@ def concat_audio_files(
     return output_path
 
 
+def insert_audio_silence(
+    audio_path: Path,
+    before_main_sec: float,
+    silence_sec: float,
+    output_path: Path,
+) -> Path:
+    """Sisipkan jeda hening setelah hook dan sebelum narasi utama."""
+    if silence_sec <= 0 or before_main_sec <= 0:
+        return Path(audio_path)
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        raise RuntimeError("Binary 'ffmpeg' tidak ditemukan di PATH sistem.")
+
+    output_path = Path(output_path).resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    hook_path = output_path.parent / "hook_audio_part.mp3"
+    main_path = output_path.parent / "main_audio_part.mp3"
+    silence_path = output_path.parent / "intro_silence.wav"
+
+    for start, duration, target in (
+        (0.0, before_main_sec, hook_path),
+        (before_main_sec, 0.0, main_path),
+    ):
+        cmd = [ffmpeg_bin, "-y", "-ss", f"{start:.3f}", "-i", str(audio_path)]
+        if duration > 0:
+            cmd.extend(["-t", f"{duration:.3f}"])
+        cmd.extend(["-vn", "-c:a", "libmp3lame", "-q:a", "2", str(target)])
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        if res.returncode != 0 or not target.exists() or target.stat().st_size == 0:
+            raise RuntimeError(f"FFmpeg gagal memisahkan audio hook/main: {res.stderr}")
+
+    cmd = [
+        ffmpeg_bin, "-y", "-f", "lavfi", "-i",
+        f"anullsrc=r=48000:cl=stereo:d={silence_sec:.3f}",
+        "-t", f"{silence_sec:.3f}", "-c:a", "pcm_s16le", str(silence_path),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    if res.returncode != 0 or not silence_path.exists():
+        raise RuntimeError(f"FFmpeg gagal membuat jeda audio intro: {res.stderr}")
+
+    cmd = [
+        ffmpeg_bin, "-y", "-i", str(hook_path), "-i", str(silence_path), "-i", str(main_path),
+        "-filter_complex", "[0:a][1:a][2:a]concat=n=3:v=0:a=1[a]",
+        "-map", "[a]", "-c:a", "libmp3lame", "-q:a", "2", str(output_path),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    if res.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError(f"FFmpeg gagal menyisipkan jeda audio intro: {res.stderr}")
+    return output_path
+
+
+def build_cinematic_audio(
+    storyboard: Any,
+    source_video: Path,
+    project_dir: Path,
+    output_path: Path,
+) -> Path | None:
+    """Gabungkan TTS segment + audio asli pada cinematic break."""
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        raise RuntimeError("Binary 'ffmpeg' tidak ditemukan di PATH sistem.")
+    segments = list(getattr(storyboard, "segments", []) or [])
+    if not segments or not all(getattr(s, "audio_file", None) for s in segments):
+        return None
+    breaks = {
+        int(br.after_segment_id): br
+        for section in getattr(storyboard, "sections", []) or []
+        for br in getattr(section, "cinematic_breaks", []) or []
+    }
+    if not breaks:
+        return None
+
+    work_dir = Path(project_dir) / "plan2" / "work" / "cinematic_audio"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    audio_paths: List[Path] = []
+    for segment in segments:
+        segment_audio = Path(project_dir) / str(segment.audio_file)
+        if not segment_audio.exists():
+            return None
+        audio_paths.append(segment_audio)
+        br = breaks.get(int(segment.segment_id))
+        if br is None:
+            continue
+        break_audio = work_dir / f"break_{int(segment.segment_id):04d}.mp3"
+        cmd = [
+            ffmpeg_bin, "-y", "-ss", str(parse_timestamp_for_audio(br.start)),
+            "-i", str(source_video), "-t", f"{min(float(br.duration), 3.0):.3f}",
+            "-vn", "-c:a", "libmp3lame", "-q:a", "2", str(break_audio),
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        if res.returncode != 0 or not break_audio.exists() or break_audio.stat().st_size == 0:
+            return None
+        audio_paths.append(break_audio)
+    return concat_audio_files(audio_paths, Path(output_path))
+
+
+def parse_timestamp_for_audio(value: str) -> float:
+    parts = str(value or "0").split(":")
+    try:
+        if len(parts) == 3:
+            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+        return float(value or 0)
+    except ValueError:
+        return 0.0
+
+
 def generate_storyboard_tts_sections(
     storyboard: Any,
     voice: str = "id-ID-ArdiNeural",

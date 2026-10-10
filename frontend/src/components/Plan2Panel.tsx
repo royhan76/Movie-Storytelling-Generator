@@ -25,6 +25,7 @@ export function Plan2Panel({ currentProjectId }: Plan2PanelProps) {
     currentProjectId || "",
   )
   const [videoFile, setVideoFile] = useState<File | null>(null)
+  const [introVideoFile, setIntroVideoFile] = useState<File | null>(null)
   const [videoPath, setVideoPath] = useState<string>("")
   const [rendering, setRendering] = useState<boolean>(false)
   const [progressStatus, setProgressStatus] = useState<Plan2JobStatus | null>(
@@ -77,6 +78,7 @@ export function Plan2Panel({ currentProjectId }: Plan2PanelProps) {
       const finalStatus = await renderPlan2Video(
         selectedProjectId,
         videoFile || undefined,
+        introVideoFile || undefined,
         videoPath.trim() || undefined,
         selectedVoice,
         includeTts,
@@ -166,6 +168,22 @@ export function Plan2Panel({ currentProjectId }: Plan2PanelProps) {
                 disabled={rendering}
                 className="bg-slate-800 border-slate-700 text-slate-200"
               />
+            </div>
+
+            <div className="pt-3 border-t border-slate-800">
+              <label className="block text-sm font-medium text-amber-300 mb-1">
+                Video Intro (opsional — diputar setelah Hook, sebelum Main Video)
+              </label>
+              <Input
+                type="file"
+                accept="video/*,.mp4,.mkv,.mov,.avi,.webm"
+                onChange={(e) => setIntroVideoFile(e.target.files?.[0] || null)}
+                disabled={rendering}
+                className="bg-slate-800 border-slate-700 text-slate-200 cursor-pointer"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Audio intro dimatikan dan voice-over diberi jeda sesuai durasi intro.
+              </p>
             </div>
           </div>
 

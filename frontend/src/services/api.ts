@@ -182,6 +182,7 @@ export function summarizeStoryboard(sb: Storyboard) {
 export async function renderPlan2Video(
   projectId: string,
   videoFile?: File,
+  introVideoFile?: File,
   videoPath?: string,
   voice: string = "id-ID-ArdiNeural",
   includeTts: boolean = true,
@@ -198,6 +199,7 @@ export async function renderPlan2Video(
   } else {
     throw new Error("Pilih file video atau isi jalur file video lokal.")
   }
+  if (introVideoFile) body.append("intro_video", introVideoFile)
 
   const res = await fetch(`${API_BASE}/api/plan2/render`, { method: "POST", body })
   if (!res.ok) throw new Error(detailFromResponse(await res.text(), res.status))

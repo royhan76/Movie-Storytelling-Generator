@@ -19,8 +19,10 @@ from app.debug_log import log_call
 from app.schemas.storyboard import Storyboard
 from app.services.script_generator import storyboard_to_voiceover
 from app.services.tts_service import (
+    build_cinematic_audio,
     generate_storyboard_tts_sections,
     generate_tts_sync,
+    insert_audio_silence,
     merge_audio_video,
 )
 from app.services.video_prober import probe_video
@@ -38,6 +40,7 @@ class Plan2Renderer:
         project_id: str,
         voice: str = "id-ID-ArdiNeural",
         include_tts: bool = True,
+        intro_path: Optional[Path] = None,
         progress: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Jalankan pipeline render Plan 2 penuh (video + tts presisi per-section + merge audio) dengan resume/retry."""
@@ -54,6 +57,12 @@ class Plan2Renderer:
         video_meta = probe_video(video_path)
         video_duration = video_meta["duration"]
         emit("validate_video", phase="done", meta=video_meta)
+        intro_meta = probe_video(Path(intro_path)) if intro_path else None
+        cinematic_breaks = [
+            br
+            for section in storyboard.sections
+            for br in getattr(section, "cinematic_breaks", [])
+        ][:5]
 
         # ---- Tahap 2: Setup Directories & Section TTS ----
         proj_dir = self.projects_dir / project_id
@@ -168,6 +177,9 @@ class Plan2Renderer:
 
         total_clips = len(flat_clips)
         target_total_duration = sum(c["out_sec"] for c in flat_clips)
+        if intro_meta:
+            target_total_duration += float(intro_meta["duration"])
+        target_total_duration += sum(min(float(br.duration), 3.0) for br in cinematic_breaks)
         emit(
             "validate_storyboard",
             phase="done",
@@ -195,6 +207,9 @@ class Plan2Renderer:
         )
 
         processed_paths: List[Path] = []
+        processed_entries: List[tuple[Path, Dict[str, Any]]] = []
+        hook_paths: List[Path] = []
+        main_paths: List[Path] = []
 
         # ---- Tahap 4: Process Each Clip ----
         for item in flat_clips:
@@ -218,6 +233,11 @@ class Plan2Renderer:
             # Check if clip is already completed (resume support with parameter signature matching)
             if state.get(clip_key) in ("done", cache_sig) and state.get(clip_key) == cache_sig and proc_path.exists() and proc_path.stat().st_size > 0:
                 processed_paths.append(proc_path)
+                processed_entries.append((proc_path, item))
+                if item["section_id"] == 0:
+                    hook_paths.append(proc_path)
+                else:
+                    main_paths.append(proc_path)
                 continue
 
             try:
@@ -241,12 +261,17 @@ class Plan2Renderer:
                 state[clip_key] = cache_sig
                 state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
                 processed_paths.append(proc_path)
+                processed_entries.append((proc_path, item))
             except Exception as exc:
                 state[clip_key] = "failed"
                 state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
                 raise RuntimeError(
                     f"Gagal memproses Clip #{idx} (beat: '{item['beat']}', start: '{item['start_str']}'): {exc}"
                 ) from exc
+            if item["section_id"] == 0:
+                hook_paths.append(proc_path)
+            else:
+                main_paths.append(proc_path)
 
         # ---- Tahap 5: Concat Clips ----
         emit("concat", phase="start", total_clips=total_clips)
@@ -254,8 +279,82 @@ class Plan2Renderer:
         concat_txt = work_dir / "concat.txt"
         no_audio_video_path = output_dir / "storytelling_no_audio.mp4"
 
+        # Susun kembali berdasarkan segment dan sisipkan cinematic break tepat
+        # setelah segment yang ditandai Gemini. Break video tetap tanpa audio;
+        # audio aslinya dirakit terpisah di bawah.
+        paths_by_segment: Dict[int, List[Path]] = {}
+        for path, item in processed_entries:
+            if item.get("segment_id") is not None:
+                paths_by_segment.setdefault(int(item["segment_id"]), []).append(path)
+
+        break_paths: Dict[int, Path] = {}
+        all_breaks = [
+            (section.section_id, br)
+            for section in storyboard.sections
+            for br in getattr(section, "cinematic_breaks", [])
+        ][:5]
+        for break_index, (section_id, br) in enumerate(all_breaks, start=1):
+            break_source = source_dir / f"break_{break_index:02d}_source.mp4"
+            break_output = processed_dir / f"break_{break_index:02d}.mp4"
+            processor.extract_source_clip(
+                video_path=video_path,
+                start_sec=parse_timestamp_sec(br.start),
+                src_sec=min(float(br.src), 3.0),
+                output_path=break_source,
+            )
+            processor.process_and_transform_clip(
+                source_clip_path=break_source,
+                output_clip_path=break_output,
+                trx="baref",
+                src_duration=min(float(br.src), 3.0),
+                target_out_duration=min(float(br.duration), 3.0),
+            )
+            break_paths[int(br.after_segment_id)] = break_output
+
+        ordered_entries: List[tuple[Path, int]] = []
+        has_segment_order = False
+        for section in storyboard.sections:
+            units = list(getattr(section, "segments", []) or [])
+            if units:
+                has_segment_order = True
+                for segment in units:
+                    for path in paths_by_segment.get(int(segment.segment_id), []):
+                        ordered_entries.append((path, section.section_id))
+                    if int(segment.segment_id) in break_paths:
+                        ordered_entries.append((break_paths[int(segment.segment_id)], section.section_id))
+            else:
+                ordered_entries.extend(
+                    (path, section.section_id)
+                    for path, item in processed_entries
+                    if int(item.get("section_id", -1)) == int(section.section_id)
+                )
+        if not has_segment_order:
+            ordered_entries = [(path, int(item.get("section_id", -1))) for path, item in processed_entries]
+
+        sequence_paths = [path for path, _ in ordered_entries] or processed_paths
+        if intro_path:
+            intro_normalized = work_dir / "intro_normalized.mp4"
+            processor.normalize_video(
+                input_path=Path(intro_path),
+                output_path=intro_normalized,
+                duration=float(intro_meta["duration"]) if intro_meta else None,
+            )
+            hook_video = work_dir / "hook_only.mp4"
+            main_video = work_dir / "main_only.mp4"
+            ordered_paths: List[Path] = []
+            hook_entries = [path for path, section_id in ordered_entries if section_id == 0]
+            main_entries = [path for path, section_id in ordered_entries if section_id != 0]
+            if hook_entries:
+                processor.concat_clips(hook_entries, hook_video, work_dir / "concat_hook.txt")
+                ordered_paths.append(hook_video)
+            ordered_paths.append(intro_normalized)
+            if main_entries:
+                processor.concat_clips(main_entries, main_video, work_dir / "concat_main.txt")
+                ordered_paths.append(main_video)
+            sequence_paths = ordered_paths
+
         processor.concat_clips(
-            processed_clip_paths=processed_paths,
+            processed_clip_paths=sequence_paths,
             output_video_path=no_audio_video_path,
             concat_txt_path=concat_txt,
         )
@@ -265,12 +364,44 @@ class Plan2Renderer:
         final_video_path = no_audio_video_path
 
         # ---- Tahap 6: Merge Audio & Video (1-Click Presisi) ----
-        if include_tts and audio_path and audio_path.exists():
+        audio_for_merge = audio_path
+        if include_tts and audio_path and audio_path.exists() and cinematic_breaks:
+            cinematic_audio = build_cinematic_audio(
+                storyboard=storyboard,
+                source_video=video_path,
+                project_dir=proj_dir,
+                output_path=proj_dir / "voiceover_with_cinematic_breaks.mp3",
+            )
+            if cinematic_audio:
+                audio_for_merge = cinematic_audio
+        if include_tts and audio_for_merge and audio_for_merge.exists() and intro_meta and hook_paths:
+            hook_audio_duration = sum(
+                float(segment.audio_duration or 0.0)
+                for section in storyboard.sections
+                if section.section_id == 0
+                for segment in section.segments
+            )
+            if hook_audio_duration <= 0:
+                hook_audio_duration = float(section_audio_durations.get(0, 0.0))
+            hook_break_duration = sum(
+                min(float(br.duration), 3.0)
+                for section in storyboard.sections
+                if section.section_id == 0
+                for br in getattr(section, "cinematic_breaks", [])
+            )
+            audio_for_merge = insert_audio_silence(
+                audio_path=audio_for_merge,
+                before_main_sec=hook_audio_duration + hook_break_duration,
+                silence_sec=float(intro_meta["duration"]),
+                output_path=proj_dir / "voiceover_with_intro_silence.mp3",
+            )
+
+        if include_tts and audio_for_merge and audio_for_merge.exists():
             emit("merge_audio", phase="start")
             merged_video_path = output_dir / "final_storytelling.mp4"
             merge_audio_video(
                 video_path=no_audio_video_path,
-                audio_path=audio_path,
+                audio_path=audio_for_merge,
                 output_path=merged_video_path,
             )
             final_video_path = merged_video_path
@@ -288,6 +419,8 @@ class Plan2Renderer:
         report = {
             "project_id": project_id,
             "source_video": video_meta["filename"],
+            "intro_video": intro_meta["filename"] if intro_meta else None,
+            "intro_duration_sec": round(float(intro_meta["duration"]), 1) if intro_meta else 0.0,
             "total_clips": total_clips,
             "target_duration_sec": round(target_total_duration, 1),
             "actual_duration_sec": round(actual_duration, 1),

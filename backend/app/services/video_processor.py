@@ -208,3 +208,30 @@ class FFmpegProcessor:
             raise RuntimeError(f"FFmpeg gagal merender video final (concat): {res.stderr}")
 
         return output_video_path
+
+    def normalize_video(
+        self,
+        input_path: Path,
+        output_path: Path,
+        duration: float | None = None,
+    ) -> Path:
+        """Normalisasi video eksternal (mis. intro) ke format concat Plan 2."""
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        scale_filter = (
+            f"scale={self.target_width}:{self.target_height}:force_original_aspect_ratio=decrease,"
+            f"pad={self.target_width}:{self.target_height}:(ow-iw)/2:(oh-ih)/2:black,"
+            f"fps={self.target_fps},format=yuv420p"
+        )
+        cmd = [self.ffmpeg_bin, "-y", "-i", str(input_path)]
+        if duration and duration > 0:
+            cmd.extend(["-t", f"{duration:.3f}"])
+        cmd.extend([
+            "-vf", scale_filter,
+            "-c:v", "libx264", "-preset", self.preset, "-crf", str(self.crf),
+            "-an", str(output_path),
+        ])
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        if res.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError(f"FFmpeg gagal menormalisasi video intro: {res.stderr}")
+        return output_path

@@ -5,7 +5,15 @@ rusak dilewati, section kosong dibuang.
 """
 from typing import Any, Dict, List
 
-from app.schemas.storyboard import Clip, NarrationSegment, ProjectInfo, Section, Storyboard, Summary
+from app.schemas.storyboard import (
+    CinematicBreak,
+    Clip,
+    NarrationSegment,
+    ProjectInfo,
+    Section,
+    Storyboard,
+    Summary,
+)
 
 VALID_TRX = {"baref", "fz12", "s65", "s50", "s35"}
 
@@ -115,6 +123,19 @@ class StoryboardBuilder:
                     voice_over=voice_over,
                     clips=clips,
                     segments=section_segments,
+                    cinematic_breaks=[
+                        CinematicBreak(
+                            break_id=int(item.get("break_id") or 0),
+                            after_segment_id=int(item.get("after_segment_id") or 0),
+                            start=str(item.get("start") or "00:00:00"),
+                            src=min(3.0, max(0.4, _safe_float(item.get("src"), 2.0))),
+                            duration=min(3.0, max(0.5, _safe_float(item.get("duration"), 2.0))),
+                            reason=str(item.get("reason") or ""),
+                            audio_mode="original",
+                        )
+                        for item in (raw_section.get("cinematic_breaks") or [])
+                        if isinstance(item, dict)
+                    ][:5],
                 )
             # Jika model belum mengeluarkan segments, buat satu segment legacy
             # agar Plan 2 tetap punya unit TTS yang jelas.
@@ -145,8 +166,17 @@ class StoryboardBuilder:
 
         # Segment id harus unik secara global agar file TTS Plan 2 tidak
         # menimpa file segment dari section lain.
-        for idx, segment in enumerate(segments, start=1):
-            segment.segment_id = idx
+        global_idx = 0
+        for section in sections:
+            local_to_global: Dict[int, int] = {}
+            for segment in section.segments:
+                global_idx += 1
+                local_to_global[int(segment.segment_id)] = global_idx
+                segment.segment_id = global_idx
+            for br in section.cinematic_breaks:
+                br.after_segment_id = local_to_global.get(
+                    int(br.after_segment_id), br.after_segment_id
+                )
 
         return Storyboard(project=project, sections=sections, segments=segments, summary=Summary())
 

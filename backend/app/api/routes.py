@@ -410,6 +410,7 @@ def download(project_id: str, filename: str) -> FileResponse:
 @router.post("/plan2/render")
 async def plan2_render(
     video: UploadFile = File(None),
+    intro_video: UploadFile = File(None),
     video_path: str = Form(None),
     project_id: str = Form(...),
     voice: str = Form("id-ID-ArdiNeural"),
@@ -431,6 +432,7 @@ async def plan2_render(
         raise HTTPException(400, f"Gagal membaca storyboard.json: {exc}") from exc
 
     resolved_video_path: Path | None = None
+    resolved_intro_path: Path | None = None
 
     if video_path and video_path.strip():
         resolved_video_path = Path(video_path.strip())
@@ -447,6 +449,16 @@ async def plan2_render(
     else:
         raise HTTPException(400, "Harus menyertakan file video upload atau video_path lokal.")
 
+    if intro_video:
+        plan2_dir = proj_folder / "plan2"
+        intro_dir = plan2_dir / "intro"
+        intro_dir.mkdir(parents=True, exist_ok=True)
+        intro_name = Path(intro_video.filename or "intro.mp4").name
+        resolved_intro_path = intro_dir / intro_name
+        with open(resolved_intro_path, "wb") as buffer:
+            while chunk := await intro_video.read(1024 * 1024):
+                buffer.write(chunk)
+
     job_id = uuid.uuid4().hex[:12]
     _PLAN2_JOBS[job_id] = {
         "job_id": job_id,
@@ -457,6 +469,7 @@ async def plan2_render(
         "progress": 0,
         "started_at": time.time(),
         "video_path": str(resolved_video_path),
+        "intro_path": str(resolved_intro_path) if resolved_intro_path else None,
     }
 
     asyncio.create_task(
@@ -464,6 +477,7 @@ async def plan2_render(
             _plan2_job_worker,
             job_id,
             resolved_video_path,
+            resolved_intro_path,
             storyboard,
             project_id,
             voice,
@@ -485,6 +499,7 @@ def plan2_job_status(job_id: str) -> Dict[str, Any]:
 def _plan2_job_worker(
     job_id: str,
     video_path: Path,
+    intro_path: Path | None,
     storyboard: Storyboard,
     project_id: str,
     voice: str = "id-ID-ArdiNeural",
@@ -549,6 +564,7 @@ def _plan2_job_worker(
         renderer = Plan2Renderer(PROJECTS_DIR)
         result = renderer.render(
             video_path=video_path,
+            intro_path=intro_path,
             storyboard=storyboard,
             project_id=project_id,
             voice=voice,

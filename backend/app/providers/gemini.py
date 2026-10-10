@@ -536,6 +536,9 @@ ATURAN SEGMENT SINKRONISASI AUDIO-VISUAL:
 6. `out` setiap clip juga WAJIB <= 3 detik. DILARANG memperpanjang satu clip menjadi 5-7 detik dengan slow motion atau freeze.
 7. `audio_duration` belum diketahui sebelum TTS, jadi isi `audio_duration` dengan null dan gunakan jumlah kata sebagai perkiraan durasi.
 8. Jangan memasukkan clip dari kondisi visual lain hanya untuk mengisi durasi.
+9. Untuk maksimal 5 momen paling epic, boleh tambahkan `cinematic_breaks` pada section.
+10. Setiap cinematic break wajib memiliki `after_segment_id`, `start`, `src`, `duration`, dan `reason`; `src` serta `duration` maksimal 3 detik.
+11. Cinematic break hanya untuk benturan, ledakan, reveal, atau klimaks penting. Saat break, narator berhenti dan audio asli film terdengar.
 
 ATURAN OUTPUT:
 - Output HARUS JSON valid, tanpa teks lain.
@@ -586,6 +589,9 @@ AUDIO-VISUAL SEGMENT RULES:
 6. Each clip `out` MUST also be <= 3 seconds. NEVER stretch one clip to 5-7 seconds using slow motion or freeze.
 7. `audio_duration` is unknown before TTS, so set it to null and estimate from word count.
 8. Never add an unrelated clip just to fill duration.
+9. For up to 5 truly epic moments, a section may include `cinematic_breaks`.
+10. Each break must have `after_segment_id`, `start`, `src`, `duration`, and `reason`; both `src` and `duration` must be at most 3 seconds.
+11. Use breaks only for impact, explosion, reveal, or major climax. The narrator pauses while the original movie audio plays.
 
 OUTPUT RULES:
 - Output MUST be valid JSON, with no markdown fences or extra text.
@@ -637,6 +643,16 @@ OUTPUT RULES:
                             "out": 2.0,
                             "subtitle_ref": 1,
                             "visual_hint": hint_desc,
+                        }
+                    ],
+                    "cinematic_breaks": [
+                        {
+                            "break_id": 1,
+                            "after_segment_id": 1,
+                            "start": "00:00:40",
+                            "src": 2.0,
+                            "duration": 2.0,
+                            "reason": "epic impact moment"
                         }
                     ],
                     "segments": [
@@ -877,6 +893,16 @@ OUTPUT SCHEMA:
                             "visual_hint": hint_desc,
                         }
                     ],
+                    "cinematic_breaks": [
+                        {
+                            "break_id": 1,
+                            "after_segment_id": 1,
+                            "start": "00:00:40",
+                            "src": 2.0,
+                            "duration": 2.0,
+                            "reason": "epic impact moment"
+                        }
+                    ],
                     "segments": [
                         {
                             "segment_id": 1,
@@ -1014,6 +1040,16 @@ OUTPUT SCHEMA:
                             "out": 2.0,
                             "subtitle_ref": 1,
                             "visual_hint": hint_desc,
+                        }
+                    ],
+                    "cinematic_breaks": [
+                        {
+                            "break_id": 1,
+                            "after_segment_id": 1,
+                            "start": "00:05:00",
+                            "src": 2.0,
+                            "duration": 2.0,
+                            "reason": "most dramatic reveal"
                         }
                     ],
                 }

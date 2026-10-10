@@ -99,6 +99,18 @@ class ProjectInfo(BaseModel):
     language: str = "id"
 
 
+class CinematicBreak(BaseModel):
+    """Jeda singkat untuk menonjolkan audio asli momen epic."""
+
+    break_id: int = 0
+    after_segment_id: int = 0
+    start: str = "00:00:00"
+    src: float = 2.0
+    duration: float = 2.0
+    reason: str = ""
+    audio_mode: str = "original"
+
+
 class Section(BaseModel):
     section_id: int
     visual: str = ""
@@ -107,6 +119,7 @@ class Section(BaseModel):
     clip_count: int = 0
     total_clip_duration: float = 0.0
     segments: List["NarrationSegment"] = Field(default_factory=list)
+    cinematic_breaks: List[CinematicBreak] = Field(default_factory=list)
 
 
 class NarrationSegment(BaseModel):
