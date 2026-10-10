@@ -6,6 +6,18 @@ export type Clip = {
   trx: "baref" | "fz12" | "s65" | "s50" | "s35"
   out: number
   visual_hint?: string
+  verification?: string
+}
+
+export type NarrationSegment = {
+  segment_id: number
+  text: string
+  visual_cue: string
+  clips: Clip[]
+  audio_file?: string | null
+  audio_duration?: number | null
+  visual_duration?: number
+  sync_status?: string
 }
 
 export type Section = {
@@ -15,6 +27,7 @@ export type Section = {
   clips: Clip[]
   clip_count: number
   total_clip_duration: number
+  segments?: NarrationSegment[]
 }
 
 export type Storyboard = {
@@ -26,6 +39,7 @@ export type Storyboard = {
     estimated_word_count: number
   }
   sections: Section[]
+  segments?: NarrationSegment[]
   summary: {
     total_sections: number
     total_clips: number
@@ -51,7 +65,7 @@ export type GenerateResponse = {
 export type JobStatus = {
   job_id: string
   status: "queued" | "done" | "error"
-  stage: "queued" | "parse" | "analysis" | "script" | "validate" | "done" | "error"
+  stage: "queued" | "parse" | "analysis" | "script" | "validate" | "tts" | "done" | "error"
   message: string
   progress: number
   started_at?: number
@@ -76,4 +90,21 @@ export type ProjectSummary = {
   target_duration_minutes: number | null
   total_clips: number
   total_sections: number
+}
+
+/** Status job render Plan 2 yang dipoll dari /api/plan2/jobs/{id}. */
+export type Plan2JobStatus = {
+  job_id: string
+  project_id: string
+  status: "queued" | "done" | "error"
+  stage: string
+  message: string
+  progress: number
+  started_at?: number
+  elapsed_sec?: number
+  output_path?: string
+  output_filename?: string
+  report?: Record<string, unknown>
+  detail?: Record<string, unknown>
+  traceback?: string
 }

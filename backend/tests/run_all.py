@@ -14,6 +14,8 @@ TESTS = [
     "tests.test_target_vs_film",
     "tests.test_section_mode",
     "tests.test_pipeline",
+    "tests.test_plan2_renderer",
+    "tests.test_tts",
 ]
 
 

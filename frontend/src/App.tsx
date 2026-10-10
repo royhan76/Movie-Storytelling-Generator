@@ -3,8 +3,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Clipboard, Download, FileText, FolderTree, History, Loader2, Map as MapIcon } from "lucide-react"
+import { Clipboard, Download, FileText, Film, FolderTree, History, Loader2, Map as MapIcon } from "lucide-react"
 import { HistoryPanel } from "@/components/HistoryPanel"
+import { Plan2Panel } from "@/components/Plan2Panel"
 import type { Clip, DownloadFile, JobStatus, Storyboard } from "@/types/storyboard"
 import {
   downloadProjectFile,
@@ -12,6 +13,7 @@ import {
   GenerateError,
   generateStoryboard,
   loadProject,
+  preflightStoryboardTts,
   summarizeStoryboard,
   triggerBrowserDownload,
 } from "@/services/api"
@@ -23,12 +25,21 @@ const DOWNLOADS: Array<{ file: DownloadFile; label: string; icon: typeof FileTex
   { file: "story_map.json", label: "Story Map", icon: MapIcon },
 ]
 
+const GEMINI_MODELS = [
+  { value: "gemini-3.6-flash", label: "Gemini 3.6 Flash (Recommended)" },
+  { value: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+  { value: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite" },
+  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  { value: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite" },
+] as const
+
 const STAGE_LABEL: Record<JobStatus["stage"], string> = {
   queued: "Menunggu",
   parse: "Baca subtitle",
   analysis: "Analisis cerita",
   script: "Tulis naskah + klip",
   validate: "Validasi",
+  tts: "Ukur durasi TTS",
   done: "Selesai",
   error: "Gagal",
 }
@@ -56,7 +67,7 @@ function Stats({ sb }: { sb: Storyboard }) {
 }
 
 function ProgressPanel({ job }: { job: JobStatus }) {
-  const stages: JobStatus["stage"][] = ["parse", "analysis", "script", "validate"]
+  const stages: JobStatus["stage"][] = ["parse", "analysis", "script", "validate", "tts"]
   const currentIdx = stages.indexOf(job.stage)
 
   return (
@@ -115,9 +126,11 @@ function ClipRow({ clip }: { clip: Clip }) {
 }
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState<"plan1" | "plan2">("plan1")
   const [srtFile, setSrtFile] = useState<File | null>(null)
   const [target, setTarget] = useState(15)
   const [language, setLanguage] = useState<"id" | "en">("id")
+  const [geminiModel, setGeminiModel] = useState("gemini-3.6-flash")
   const [job, setJob] = useState<JobStatus | null>(null)
   const [downloading, setDownloading] = useState<DownloadFile | null>(null)
   const [projectId, setProjectId] = useState("")
@@ -150,9 +163,27 @@ export default function App() {
     })
 
     try {
-      const data = await generateStoryboard(srtFile, target, language, setJob)
+      const data = await generateStoryboard(srtFile, target, language, geminiModel, setJob)
       setProjectId(data.project_id)
-      setSb(data.storyboard)
+      setJob({
+        job_id: data.project_id,
+        status: "queued",
+        stage: "tts",
+        message: "Membuat TTS per segment dan mengukur durasi audio...",
+        progress: 97,
+      })
+      const ttsData = await preflightStoryboardTts(
+        data.project_id,
+        language === "en" ? "en-US-AndrewNeural" : "id-ID-ArdiNeural",
+      )
+      setSb(ttsData.storyboard)
+      setJob({
+        job_id: data.project_id,
+        status: "done",
+        stage: "done",
+        message: "Naskah dan timing TTS selesai.",
+        progress: 100,
+      })
       setErrorTrace("")
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gagal membuat naskah. Silakan coba lagi.")
@@ -233,7 +264,39 @@ export default function App() {
         </div>
       )}
 
-      <Card className="mb-8">
+      {/* Tab Navigation */}
+      <div className="mb-6 flex border-b border-slate-200">
+        <button
+          type="button"
+          onClick={() => setActiveTab("plan1")}
+          className={`px-4 py-2.5 text-sm font-semibold transition-colors flex items-center gap-2 border-b-2 ${
+            activeTab === "plan1"
+              ? "border-slate-900 text-slate-900"
+              : "border-transparent text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          <FolderTree className="h-4 w-4" />
+          Plan 1: Naskah & Storyboard
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("plan2")}
+          className={`px-4 py-2.5 text-sm font-semibold transition-colors flex items-center gap-2 border-b-2 ${
+            activeTab === "plan2"
+              ? "border-amber-500 text-amber-600 font-bold"
+              : "border-transparent text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          <Film className="h-4 w-4 text-amber-500" />
+          Plan 2: Video Renderer (No Audio)
+        </button>
+      </div>
+
+      {activeTab === "plan2" ? (
+        <Plan2Panel currentProjectId={projectId} />
+      ) : (
+        <>
+          <Card className="mb-8">
         <CardHeader>
           <CardTitle>Input</CardTitle>
           <CardDescription>Upload subtitle film, tentukan target durasi narasi, dan pilih bahasa naskah.</CardDescription>
@@ -284,6 +347,23 @@ export default function App() {
               </select>
               <p className="text-xs text-slate-500">
                 Pilih bahasa naskah & deskripsi visual.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="gemini-model">Model Gemini</Label>
+              <select
+                id="gemini-model"
+                className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                value={geminiModel}
+                disabled={busy}
+                onChange={(e) => setGeminiModel(e.target.value)}
+              >
+                {GEMINI_MODELS.map((model) => (
+                  <option key={model.value} value={model.value}>{model.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-500">
+                Bisa diganti jika model utama sedang lambat atau bermasalah.
               </p>
             </div>
           </div>
@@ -394,6 +474,29 @@ export default function App() {
                     </p>
                   </div>
 
+                  {section.segments && section.segments.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Segment Sinkronisasi
+                      </p>
+                      <div className="space-y-2">
+                        {section.segments.map((segment) => (
+                          <div key={segment.segment_id} className="rounded border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-xs font-semibold text-slate-700">
+                                Segment {segment.segment_id} · {segment.visual_cue || "visual"}
+                              </span>
+                              <span className="text-[11px] text-slate-500">
+                                {segment.clips.length} klip · {segment.audio_duration == null ? "menunggu TTS" : `${segment.audio_duration.toFixed(2)}s audio`}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-sm leading-relaxed text-slate-700">{segment.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-1.5">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Daftar Klip
@@ -421,12 +524,22 @@ export default function App() {
               </section>
             ))}
 
-            <p className="text-xs text-slate-500">
-              Timestamp klip adalah kandidat lokasi pada film, bukan jaminan frame visual tertentu.
-              Verifikasi dilakukan di Plan 2.
-            </p>
+            <div className="flex justify-between items-center pt-4 border-t border-slate-200">
+              <p className="text-xs text-slate-500">
+                Timestamp klip adalah kandidat lokasi pada film, bukan jaminan frame visual tertentu.
+                Verifikasi dilakukan di Plan 2.
+              </p>
+              <Button
+                onClick={() => setActiveTab("plan2")}
+                className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold"
+              >
+                <Film className="mr-1.5 h-4 w-4" /> Lanjut ke Plan 2 (Render Video)
+              </Button>
+            </div>
           </CardContent>
         </Card>
+      )}
+        </>
       )}
     </div>
   )

@@ -2,6 +2,7 @@ import type {
   DownloadFile,
   GenerateResponse,
   JobStatus,
+  Plan2JobStatus,
   ProjectSummary,
   Storyboard,
 } from "@/types/storyboard"
@@ -45,12 +46,14 @@ export async function generateStoryboard(
   file: File,
   targetDurationMinutes: number,
   language: string = "id",
+  geminiModel: string = "gemini-3.6-flash",
   onProgress: (status: JobStatus) => void,
 ): Promise<GenerateResponse> {
   const body = new FormData()
   body.append("subtitle", file)
   body.append("target_duration", String(targetDurationMinutes))
   body.append("language", language)
+  body.append("gemini_model", geminiModel)
 
   const startRes = await fetch(`${API_BASE}/api/jobs`, { method: "POST", body })
   if (!startRes.ok) throw new Error(detailFromResponse(await startRes.text(), startRes.status))
@@ -90,15 +93,32 @@ export async function generateStoryboardBlocking(
   file: File,
   targetDurationMinutes: number,
   language: string = "id",
+  geminiModel: string = "gemini-3.6-flash",
 ): Promise<GenerateResponse> {
   const body = new FormData()
   body.append("subtitle", file)
   body.append("target_duration", String(targetDurationMinutes))
   body.append("language", language)
+  body.append("gemini_model", geminiModel)
 
   const res = await fetch(`${API_BASE}/api/generate`, { method: "POST", body })
   if (!res.ok) throw new Error(detailFromResponse(await res.text(), res.status))
   return (await res.json()) as GenerateResponse
+}
+
+/** Generate TTS per segment and persist actual audio durations for Plan 2. */
+export async function preflightStoryboardTts(
+  projectId: string,
+  voice: string = "id-ID-ArdiNeural",
+): Promise<{ success: boolean; audio_filename: string; storyboard: Storyboard }> {
+  const body = new FormData()
+  body.append("voice", voice)
+  const res = await fetch(`${API_BASE}/api/projects/${projectId}/tts-preflight`, {
+    method: "POST",
+    body,
+  })
+  if (!res.ok) throw new Error(detailFromResponse(await res.text(), res.status))
+  return (await res.json()) as { success: boolean; audio_filename: string; storyboard: Storyboard }
 }
 
 /** Daftar project tersimpan, terbaru dulu (dari GET /api/projects). */
@@ -156,4 +176,100 @@ export function summarizeStoryboard(sb: Storyboard) {
     words: sb.project.estimated_word_count,
     target: sb.project.target_duration_minutes,
   }
+}
+
+/** Submit job render Plan 2 (potong video, transform, concat, remove audio) & poll progress. */
+export async function renderPlan2Video(
+  projectId: string,
+  videoFile?: File,
+  videoPath?: string,
+  voice: string = "id-ID-ArdiNeural",
+  includeTts: boolean = true,
+  onProgress?: (status: Plan2JobStatus) => void,
+): Promise<Plan2JobStatus> {
+  const body = new FormData()
+  body.append("project_id", projectId)
+  body.append("voice", voice)
+  body.append("include_tts", String(includeTts))
+  if (videoFile) {
+    body.append("video", videoFile)
+  } else if (videoPath) {
+    body.append("video_path", videoPath)
+  } else {
+    throw new Error("Pilih file video atau isi jalur file video lokal.")
+  }
+
+  const res = await fetch(`${API_BASE}/api/plan2/render`, { method: "POST", body })
+  if (!res.ok) throw new Error(detailFromResponse(await res.text(), res.status))
+
+  const { job_id: jobId } = (await res.json()) as { job_id: string }
+
+  const POLL_MS = 2000
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS))
+
+    const pollRes = await fetch(`${API_BASE}/api/plan2/jobs/${jobId}`)
+    if (!pollRes.ok) throw new Error(detailFromResponse(await pollRes.text(), pollRes.status))
+    const status = (await pollRes.json()) as Plan2JobStatus
+    if (onProgress) onProgress(status)
+
+    if (status.status === "error") {
+      throw new GenerateError(
+        status.message || "Gagal render video Plan 2.",
+        status.traceback,
+      )
+    }
+    if (status.status === "done") {
+      return status
+    }
+  }
+}
+
+export function getProjectVideoUrl(projectId: string): string {
+  return `${API_BASE}/api/projects/${projectId}/video`
+}
+
+export type TtsVoice = {
+  code: string
+  name: string
+  lang: string
+}
+
+export async function getTtsVoices(): Promise<TtsVoice[]> {
+  const res = await fetch(`${API_BASE}/api/tts/voices`)
+  if (!res.ok) throw new Error(detailFromResponse(await res.text(), res.status))
+  const data = (await res.json()) as { voices: TtsVoice[] }
+  return data.voices ?? []
+}
+
+export async function generateTtsVoiceover(
+  projectId: string,
+  voice: string = "id-ID-ArdiNeural",
+  rate: string = "+0%",
+  pitch: string = "+0Hz",
+): Promise<{ success: boolean; audio_filename: string }> {
+  const body = new FormData()
+  body.append("voice", voice)
+  body.append("rate", rate)
+  body.append("pitch", pitch)
+
+  const res = await fetch(`${API_BASE}/api/projects/${projectId}/tts`, { method: "POST", body })
+  if (!res.ok) throw new Error(detailFromResponse(await res.text(), res.status))
+  return (await res.json()) as { success: boolean; audio_filename: string }
+}
+
+export async function mergeAudioVideo(
+  projectId: string,
+): Promise<{ success: boolean; output_filename: string }> {
+  const res = await fetch(`${API_BASE}/api/projects/${projectId}/merge-audio-video`, { method: "POST" })
+  if (!res.ok) throw new Error(detailFromResponse(await res.text(), res.status))
+  return (await res.json()) as { success: boolean; output_filename: string }
+}
+
+export function getVoiceoverAudioUrl(projectId: string): string {
+  return `${API_BASE}/api/projects/${projectId}/voiceover.mp3`
+}
+
+export function getFinalVideoUrl(projectId: string): string {
+  return `${API_BASE}/api/projects/${projectId}/final_storytelling.mp4`
 }

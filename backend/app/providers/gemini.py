@@ -39,6 +39,10 @@ RATE_LIMIT_MARKERS = (
     "quota_exceeded",
     "status=429",
     "code=429",
+    "status=503",
+    "code=503",
+    "unavailable",
+    "high demand",
 )
 
 # RetryInfo.retryDelay di balasan 429. Kalau > 60 detik, ini batas DAILY
@@ -46,11 +50,39 @@ RATE_LIMIT_MARKERS = (
 # Menunggu 7 jam tidak masuk akal di dalam request HTTP.
 DAILY_QUOTA_FLOOR_SEC = 60.0
 
+# Error-error ini adalah masalah konfigurasi/model, bukan rate limit. Jangan
+# di-retry karena hanya membakar request dan sering membuat error akhirnya
+# salah dilaporkan sebagai kuota habis.
+MODEL_CONFIG_ERROR_MARKERS = (
+    "not found",
+    "not_found",
+    "unsupported for generatecontent",
+    "unsupported for generate content",
+    "invalid_argument",
+    "invalid argument",
+    "permission_denied",
+    "permission denied",
+    "unauthenticated",
+    "api key not valid",
+    "status=401",
+    "status=403",
+    "status=404",
+    "code=401",
+    "code=403",
+    "code=404",
+)
+
 
 def _is_rate_limit(exc: Exception) -> bool:
     """Deteksi 429 / resource exhausted dari exception google-genai."""
     text = f"{type(exc).__name__}: {exc}".lower()
     return any(marker in text for marker in RATE_LIMIT_MARKERS)
+
+
+def _is_model_config_error(exc: Exception) -> bool:
+    """Deteksi model/API yang tidak tersedia atau tidak diizinkan."""
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in MODEL_CONFIG_ERROR_MARKERS)
 
 
 def _daily_quota_retry_delay(exc: Exception) -> Optional[float]:
@@ -158,23 +190,29 @@ class GeminiProvider:
     # habis, model lain punya kuota terpisah — jadi gagal daily di model
     # pertama bukan akhir dunia, asal ada model cadangan.
     DEFAULT_FALLBACKS = (
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-3.1-flash-lite",
     )
+    # Dipakai untuk membuang fallback lama dari .env, misalnya gemini-1.5-pro.
+    # Daftar ini sengaja mengikuti model yang ditawarkan UI saat ini.
+    SUPPORTED_MODELS = frozenset(DEFAULT_FALLBACKS)
 
-    def __init__(self) -> None:
+    def __init__(self, model_override: str | None = None) -> None:
         self.api_key = os.getenv("GEMINI_API_KEY", "").strip()
         primary = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip() or "gemini-3.6-flash"
+        if model_override and model_override.strip():
+            primary = model_override.strip()
+        # Konfigurasi lama tidak boleh membuat request ke model yang sudah
+        # retired. Jika model dari .env lama, pakai model aktif pertama.
+        if primary not in self.SUPPORTED_MODELS:
+            primary = self.DEFAULT_FALLBACKS[0]
         fallbacks = [
             m.strip()
             for m in os.getenv("GEMINI_FALLBACK_MODELS", "").split(",")
-            if m.strip()
+            if m.strip() and m.strip() in self.SUPPORTED_MODELS
         ]
         if not fallbacks:
             fallbacks = [m for m in self.DEFAULT_FALLBACKS if m != primary]
@@ -221,13 +259,19 @@ class GeminiProvider:
 
         last_error: Optional[Exception] = None
         daily_blocked: List[str] = []
+        config_errors: Dict[str, Exception] = {}
+        other_errors: List[Exception] = []
         minute_hits = 0
+        try:
+            max_attempts = max(1, int(os.getenv("GEMINI_API_RETRIES", "3")) + 1)
+        except ValueError:
+            max_attempts = 4
 
         for model in self.models:
             if model in daily_blocked:
                 continue
 
-            for attempt in range(4):
+            for attempt in range(max_attempts):
                 p = prompt
                 if attempt > 0 and minute_hits == 0:
                     p = (
@@ -262,6 +306,12 @@ class GeminiProvider:
                         error=exc,
                     )
                     if not _is_rate_limit(exc):
+                        if _is_model_config_error(exc):
+                            config_errors[model] = exc
+                            # Model invalid/retired/unauthorized tidak akan
+                            # berubah dengan retry; langsung pindah fallback.
+                            break
+                        other_errors.append(exc)
                         _sleep(min(2 ** attempt, 8))
                         continue
 
@@ -276,14 +326,32 @@ class GeminiProvider:
                         break
                     _sleep(_backoff_seconds(minute_hits))
 
-        quota_msg = (
-            "Kuota Gemini harian habis untuk semua model yang dikonfigurasi. "
-            "Kuota free tier 20 request per model per hari dan direset sekitar tengah malam. "
-            "Coba lagi besok, atau set GEMINI_FALLBACK_MODELS untuk menambah model cadangan."
-            if daily_blocked
-            else "Gemini sedang membatasi request (rate limit per menit). Tunggu 1-2 menit lalu coba lagi."
+        if config_errors and not daily_blocked and not other_errors:
+            models = ", ".join(config_errors)
+            raise RuntimeError(
+                f"Model Gemini tidak tersedia/ditolak: {models}. "
+                "Pilih model aktif di UI atau perbarui GEMINI_MODEL. "
+                f"Detail: {next(iter(config_errors.values()))}"
+            )
+        if daily_blocked and not config_errors and not other_errors:
+            raise RuntimeError(
+                "Kuota Gemini harian terdeteksi habis pada model: "
+                f"{', '.join(daily_blocked)}. Batas dan waktu reset mengikuti project Google AI Studio "
+                "(umumnya sekitar tengah malam waktu Pacific); "
+                "API key baru pada project yang sama tidak menambah kuota."
+            )
+        if config_errors and daily_blocked:
+            raise RuntimeError(
+                "Request Gemini gagal: sebagian model kehabisan kuota dan sebagian tidak tersedia. "
+                f"Model kuota habis: {', '.join(daily_blocked)}; "
+                f"model tidak tersedia: {', '.join(config_errors)}. "
+                "Pilih model aktif dan pastikan API key berasal dari project yang benar."
+            )
+        raise RuntimeError(
+            "Gemini gagal memproses request setelah percobaan terbatas. "
+            "Periksa model, API key/project, atau tunggu rate limit pulih. "
+            f"Detail terakhir: {last_error}"
         )
-        raise RuntimeError(f"{quota_msg} ({last_error})")
 
     # ------------------------------------------------------------------ #
     # Tahap 1 — story analysis
@@ -433,10 +501,19 @@ ATURAN UTAMA:
 7. Jangan terlalu banyak dialog langsung; tulis sebagai storyteller.
 8. Voice-over harus padat dan sesuai target durasi.
 
+ATURAN RELEVANSI VISUAL DENGAN NARASI (SANGAT PENTING):
+1. Setiap klip visual HARUS secara langsung menampilkan adegan/peristiwa yang dibicarakan oleh narasi `voice_over` pada bagian tersebut.
+2. CARA MEMILIH TIMESTAMP `start`:
+   - Baca kalimat narasi `voice_over` yang kamu tulis.
+   - Cari baris pada `TIMELINE SUBTITLE` di bagian ini yang berisi dialog/aksi/karakter yang paling sesuai dengan kalimat narasi itu.
+   - Gunakan timestamp `start` dari baris subtitle tersebut sebagai `start` klip!
+   - DILARANG KERAS menggunakan timestamp dari bagian film lain yang tidak relevan dengan narasi bagian ini!
+3. `visual_hint`: Tuliskan deskripsi visual singkat yang menjelaskan apa yang tampak pada timestamp tersebut (misal: "Shin dan Sakamoto memasuki lorong laboratorium").
+
 ATURAN CLIP BLUEPRINT:
 1. Setiap clip punya: beat, start, src, trx, out.
 2. beat = lowercase-kebab-case (contoh: walk, run, confront, silent-stare, weapon-aim, embrace, child, photo-memory).
-3. start HARUS diambil dari timestamp subtitle (HH:MM:SS). Ini kandidat lokasi klip, bukan klaim pasti.
+3. start HARUS diambil dari timestamp subtitle (HH:MM:SS) yang relevan dengan narasi di atas.
 4. src = durasi sumber, WAJIB 0 < src <= 3.0. JANGAN pernah lebih dari 3 detik.
 5. trx hanya boleh: baref, fz12, s65, s50, s35.
 6. out = durasi hasil SETELAH transform:
@@ -449,6 +526,16 @@ ATURAN CLIP BLUEPRINT:
 8. Hindari pengulangan timestamp.
 9. Visual mengikuti narasi, bukan daftar klip acak.
 10. Jumlah klip mengikuti kepadatan cerita (bagian aksi lebih banyak, bagian tenang lebih sedikit).
+
+ATURAN SEGMENT SINKRONISASI AUDIO-VISUAL:
+1. Pecah `voice_over` menjadi beberapa `segments`; satu segment hanya boleh memuat satu gagasan visual.
+2. Jika narasi berpindah dari kondisi A ke B (misalnya karakter gemuk menjadi kurus), WAJIB buat segment baru.
+3. Setiap segment wajib memiliki `segment_id`, `text`, `visual_cue`, dan daftar `clips` yang relevan.
+4. Satu segment boleh memiliki beberapa clip; setiap `src` tetap maksimal 3 detik.
+5. Jumlah clip WAJIB minimal `ceil(perkiraan_durasi_narasi / 3)`. Narasi 17 detik harus memiliki minimal 6 clip; narasi 6-8 detik minimal 2-3 clip.
+6. `out` setiap clip juga WAJIB <= 3 detik. DILARANG memperpanjang satu clip menjadi 5-7 detik dengan slow motion atau freeze.
+7. `audio_duration` belum diketahui sebelum TTS, jadi isi `audio_duration` dengan null dan gunakan jumlah kata sebagai perkiraan durasi.
+8. Jangan memasukkan clip dari kondisi visual lain hanya untuk mengisi durasi.
 
 ATURAN OUTPUT:
 - Output HARUS JSON valid, tanpa teks lain.
@@ -489,6 +576,16 @@ CLIP BLUEPRINT RULES:
 8. Avoid repeating timestamps.
 9. Visuals follow the narration flow, not a random clip list.
 10. Clip quantity matches story density (action parts more clips, quiet parts fewer).
+
+AUDIO-VISUAL SEGMENT RULES:
+1. Split `voice_over` into `segments`; each segment contains one visual idea.
+2. If narration changes from state A to state B (for example fat character becomes thin), create a new segment.
+3. Each segment must contain `segment_id`, `text`, `visual_cue`, and relevant `clips`.
+4. A segment may contain multiple clips; each `src` must remain at most 3 seconds.
+5. Minimum clip count is `ceil(estimated_narration_duration / 3)`. A 17-second narration needs at least 6 clips; a 6-8 second narration needs at least 2-3 clips.
+6. Each clip `out` MUST also be <= 3 seconds. NEVER stretch one clip to 5-7 seconds using slow motion or freeze.
+7. `audio_duration` is unknown before TTS, so set it to null and estimate from word count.
+8. Never add an unrelated clip just to fill duration.
 
 OUTPUT RULES:
 - Output MUST be valid JSON, with no markdown fences or extra text.
@@ -542,6 +639,25 @@ OUTPUT RULES:
                             "visual_hint": hint_desc,
                         }
                     ],
+                    "segments": [
+                        {
+                            "segment_id": 1,
+                            "text": "one complete narration sentence for this visual beat",
+                            "visual_cue": "fat-character",
+                            "audio_duration": None,
+                            "clips": [
+                                {
+                                    "beat": "fat-character",
+                                    "start": "00:00:40",
+                                    "src": 2.0,
+                                    "trx": "baref",
+                                    "out": 2.0,
+                                    "visual_hint": hint_desc,
+                                    "verification": "required"
+                                }
+                            ]
+                        }
+                    ]
                 }
             ],
             "summary": {"total_sections": 0, "total_clips": 0, "total_clip_duration": 0.0},
@@ -761,6 +877,25 @@ OUTPUT SCHEMA:
                             "visual_hint": hint_desc,
                         }
                     ],
+                    "segments": [
+                        {
+                            "segment_id": 1,
+                            "text": "one complete narration sentence for this visual beat",
+                            "visual_cue": "fat-character",
+                            "audio_duration": None,
+                            "clips": [
+                                {
+                                    "beat": "fat-character",
+                                    "start": "00:00:40",
+                                    "src": 2.0,
+                                    "trx": "baref",
+                                    "out": 2.0,
+                                    "visual_hint": hint_desc,
+                                    "verification": "required"
+                                }
+                            ]
+                        }
+                    ]
                 }
             },
             ensure_ascii=False,

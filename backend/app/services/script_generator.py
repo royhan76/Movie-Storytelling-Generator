@@ -4,12 +4,18 @@ Pipelines:
     SRT -> timeline -> Story Analysis -> Storytelling+Storyboard -> revisi -> output
 """
 import json
+import os
 from typing import Any, Callable, Dict, List, Optional
 
 from app.debug_log import log_call
 from app.providers.gemini import GeminiProvider
 from app.schemas.storyboard import Storyboard
-from app.services.clip_validator import solve_durations, validate_section
+from app.services.clip_validator import (
+    enforce_segment_clip_budget,
+    solve_durations,
+    sync_segments_from_sections,
+    validate_section,
+)
 from app.services.duration_validator import DEFAULT_WPM, recalc
 from app.services.srt_parser import SrtParser
 from app.services.story_analyzer import StoryAnalyzer, events_for_target
@@ -18,7 +24,7 @@ from app.services.storyboard_generator import StoryboardBuilder
 DURATION_TOLERANCE_PCT = 15.0
 
 # Berapa cue yang dianalisis per panggilan Gemini. Subtitle 1549 cue = 5 chunk.
-ANALYSIS_CHUNK = 350
+ANALYSIS_CHUNK = max(350, int(os.getenv("GEMINI_ANALYSIS_CHUNK", "350")))
 
 # Tahap 2: subtitle yang sangat panjang dipotong jadi beberapa bagian cerita,
 # lalu disambung. Kalau semua subtitle dikirim utuh ke satu prompt, request-nya
@@ -211,8 +217,16 @@ class StoryPipeline:
                 _, issues = validate_section(section, self.parser, timeline_start, timeline_end, seen)
                 all_issues.extend(issues)
 
+            candidate = sync_segments_from_sections(candidate)
+            all_issues.extend(enforce_segment_clip_budget(candidate, wpm=self.wpm))
+            candidate = sync_segments_from_sections(candidate)
+
             candidate, report = recalc(candidate, self.wpm)
             candidate, solve_report = solve_durations(candidate, tolerance_pct=DURATION_TOLERANCE_PCT)
+            # Solver lama boleh memilih slow-motion untuk mengejar total durasi.
+            # Tegakkan lagi batas 3 detik per unit setelah solver selesai.
+            all_issues.extend(enforce_segment_clip_budget(candidate, wpm=self.wpm))
+            candidate = sync_segments_from_sections(candidate)
             candidate, report = recalc(candidate, self.wpm)
             report["issues"] = all_issues
             report["attempts"] = attempts
@@ -480,6 +494,18 @@ def storyboard_to_markdown(sb) -> str:
         lines.append("")
         lines.append(section.voice_over)
         lines.append("")
+        if section.segments:
+            lines.append("### Segment Sinkronisasi Audio-Visual")
+            lines.append("")
+            lines.append("| segment | visual cue | narasi | audio duration | status |")
+            lines.append("|---------|-------------|--------|----------------|--------|")
+            for segment in section.segments:
+                duration = "pending TTS" if segment.audio_duration is None else f"{segment.audio_duration:.2f}s"
+                text = segment.text.replace("|", "\\|").replace("\n", " ")
+                lines.append(
+                    f"| {segment.segment_id} | {segment.visual_cue} | {text} | {duration} | {segment.sync_status} |"
+                )
+            lines.append("")
         lines.append(f"**Jumlah klip bagian ini:** {section.clip_count}")
         lines.append(f"**Total durasi klip bagian ini:** {section.total_clip_duration}s")
         lines.append("")

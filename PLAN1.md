@@ -1171,4 +1171,91 @@ FILM.SRT
 
 **Fokus Plan 1 hanya sampai `storyboard.json` dan naskah storytelling selesai.**
 
+---
+
+# 32. Revisi Sinkronisasi Audio-Visual
+
+Plan 1 wajib membagi naskah menjadi `segments` kecil berdasarkan satu gagasan atau perubahan visual. Segment menjadi penghubung antara narasi dan visual.
+
+Plan 1 tidak boleh menganggap estimasi `150 kata/menit` sebagai durasi final. Estimasi tersebut hanya digunakan untuk perencanaan panjang naskah. Durasi final ditentukan setelah TTS dibuat di Plan 2.
+
+Struktur segment minimal:
+
+```json
+{
+  "segment_id": 1,
+  "text": "Awalnya, pria itu memiliki tubuh yang sangat gemuk.",
+  "visual_cue": "fat-character",
+  "clips": [
+    {
+      "beat": "fat-character",
+      "start": "00:02:10",
+      "src": 2.5,
+      "trx": "baref",
+      "out": null,
+      "verification": "required"
+    }
+  ]
+}
+```
+
+Aturan baru:
+
+1. Satu segment berisi satu gagasan visual yang jelas.
+2. Jika narasi berpindah dari kondisi A ke kondisi B, buat segment berbeda.
+3. Setiap segment memiliki `text`, `visual_cue`, dan satu atau lebih kandidat clip.
+4. `src` setiap clip tetap lebih besar dari 0 dan maksimal 3 detik.
+5. `out` boleh lebih dari 3 detik, tetapi nilai finalnya ditentukan Plan 2 berdasarkan durasi TTS.
+6. Satu segment boleh memiliki beberapa clip yang relevan.
+7. Plan 1 boleh memberi `suggested_trx`, tetapi Plan 2 berhak memilih kombinasi transform terbaik untuk memenuhi durasi audio.
+8. Timestamp tetap merupakan kandidat sumber dari timeline subtitle, bukan jaminan visual.
+9. Jangan mengisi kekurangan durasi dengan klip yang tidak berhubungan dengan narasi.
+
+Output `storyboard.json` tetap menjadi kontrak Plan 2, dengan tambahan:
+
+```json
+{
+  "segments": [
+    {
+      "segment_id": 1,
+      "text": "...",
+      "visual_cue": "fat-character",
+      "clips": []
+    }
+  ]
+}
+```
+
+Format lama `sections[].voice_over` tetap boleh dipertahankan untuk kompatibilitas, tetapi Plan 2 wajib menggunakan `segments` jika tersedia.
+
+---
+
+# 33. TTS Preflight Plan 1
+
+Sebelum Plan 1 dinyatakan selesai, aplikasi menjalankan TTS per segment untuk mendapatkan durasi audio nyata. Tahap ini tidak memotong video.
+
+```text
+storyboard segments
+    -> TTS per segment
+    -> ukur audio_duration
+    -> simpan segment_XXXX.mp3
+    -> gabungkan voiceover.mp3
+    -> simpan metadata timing ke storyboard.json
+```
+
+Setiap segment setelah preflight memiliki:
+
+```json
+{
+  "audio_file": "tts_segments/segment_0001.mp3",
+  "audio_duration": 3.42,
+  "visual_duration": 3.42,
+  "sync_status": "tts_ready"
+}
+```
+
+Durasi TTS aktual menjadi sumber kebenaran Plan 2. Estimasi WPM hanya digunakan sebelum TTS untuk mengarahkan panjang naskah.
+
+Jika TTS gagal, project tidak boleh dianggap fully synchronized. UI harus menampilkan error/warning dan user dapat menjalankan preflight ulang.
+
 Plan 2 akan dibuat terpisah setelah format Plan 1 ini sudah stabil.

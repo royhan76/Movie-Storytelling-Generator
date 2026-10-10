@@ -22,6 +22,8 @@ class Clip(BaseModel):
     # str (bukan Literal): trx di luar daftar harus dinormalisasi validator, bukan crash
     trx: str = "baref"
     out: float = Field(default=2.0, gt=0, description="durasi hasil setelah transform")
+    visual_hint: str = ""
+    verification: str = "required"
 
     @field_validator("beat")
     @classmethod
@@ -104,6 +106,21 @@ class Section(BaseModel):
     clips: List[Clip] = Field(default_factory=list)
     clip_count: int = 0
     total_clip_duration: float = 0.0
+    segments: List["NarrationSegment"] = Field(default_factory=list)
+
+
+class NarrationSegment(BaseModel):
+    """Satu unit narasi yang menjadi batas sinkronisasi audio-visual Plan 2."""
+
+    segment_id: int
+    text: str = ""
+    visual_cue: str = ""
+    clips: List[Clip] = Field(default_factory=list)
+    # Belum diketahui di Plan 1; Plan 2 mengisinya setelah TTS dibuat.
+    audio_file: str | None = None
+    audio_duration: float | None = None
+    visual_duration: float = 0.0
+    sync_status: str = "pending_tts"
 
 
 class Summary(BaseModel):
@@ -115,6 +132,9 @@ class Summary(BaseModel):
 class Storyboard(BaseModel):
     project: ProjectInfo = ProjectInfo()
     sections: List[Section] = Field(default_factory=list)
+    # Flattened, canonical list untuk Plan 2. Sections tetap dipertahankan
+    # sebagai format tampilan/kompatibilitas Plan 1 lama.
+    segments: List[NarrationSegment] = Field(default_factory=list)
     summary: Summary = Summary()
 
 

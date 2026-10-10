@@ -22,11 +22,13 @@ Tugas Plan 2:
 6. Menyusun semua clip sesuai urutan storyboard.
 7. Menggabungkan seluruh clip.
 8. Menghapus/mengabaikan audio sumber.
-9. Render menjadi **satu video final tanpa audio**.
+9. Generate dan gabungkan TTS voice-over per segment, lalu render menjadi satu video final yang sinkron dengan audio.
 
 > **Fokus utama Plan 2 adalah proses video editing otomatis.**
 >
-> Tidak ada pembuatan voice-over, TTS, musik, atau audio mixing di Plan 2.
+> Pada revisi sinkronisasi, Plan 2 membuat TTS voice-over per segment. Musik dan audio mixing lanjutan tetap berada di tahap berikutnya.
+
+Catatan: aturan lama yang menyebut output tanpa audio hanya berlaku untuk preview intermediate. Aturan sinkronisasi pada Bagian 45 adalah aturan final dan menjadi prioritas.
 
 ---
 
@@ -140,7 +142,7 @@ REMOVE AUDIO
 FINAL RENDER
      │
      ▼
-storytelling_no_audio.mp4
+storytelling.mp4
 ```
 
 ---
@@ -1683,3 +1685,184 @@ Tidak ada AI yang mengubah urutan.
 Tidak ada pemilihan timestamp baru.
 
 Plan 2 harus menjadi **video editing engine yang deterministic dan dapat diprediksi**.
+
+---
+
+# 45. Revisi Sinkronisasi Audio-Visual
+
+Bagian ini menggantikan aturan lama yang menyatakan Plan 2 tidak membuat audio. Pada versi sinkronisasi baru, Plan 2 wajib membuat TTS voice-over per `segment`, mengukur durasi audio sebenarnya, lalu menjadikan durasi tersebut sebagai timeline utama video.
+
+## Prinsip Utama
+
+Urutan proses yang benar:
+
+```text
+storyboard.json
+       |
+       v
+baca segments
+       |
+       v
+generate TTS per segment
+       |
+       v
+ukur durasi audio sebenarnya
+       |
+       v
+rencanakan clip visual sampai durasi audio terpenuhi
+       |
+       v
+potong source clip
+       |
+       v
+apply transform dan normalize
+       |
+       v
+gabungkan video segment + audio segment
+       |
+       v
+validasi sinkronisasi
+       |
+       v
+render final
+```
+
+Estimasi WPM dari Plan 1 hanya digunakan untuk perencanaan naskah. Estimasi tersebut tidak boleh dipakai sebagai timing final.
+
+## Segment Audio
+
+Setiap segment Plan 1 harus menghasilkan satu audio TTS terpisah:
+
+```text
+segment_0001.wav
+segment_0002.wav
+segment_0003.wav
+```
+
+Metadata runtime:
+
+```json
+{
+  "segment_id": 1,
+  "text": "Awalnya, pria itu memiliki tubuh yang sangat gemuk.",
+  "audio_file": "segment_0001.wav",
+  "audio_duration": 3.42,
+  "visual_cue": "fat-character",
+  "clips": []
+}
+```
+
+Durasi `audio_duration` adalah sumber kebenaran untuk segment tersebut.
+
+## Aturan Durasi Clip
+
+Aturan source tetap wajib:
+
+```text
+0 < src <= 3.0 detik
+```
+
+Namun `out` boleh lebih dari 3 detik karena:
+
+- slow motion;
+- freeze frame;
+- beberapa clip relevan dalam satu segment;
+- clip pendukung yang masih sesuai dengan `visual_cue`.
+
+Contoh narasi berdurasi 5 detik:
+
+```text
+clip 1: src 2.0, trx s65,  out 3.08
+clip 2: src 1.0, trx fz12, out 1.20
+clip 3: src 0.7, trx baref, out 0.70
+total visual: 4.98 detik
+```
+
+Nilai tersebut valid jika durasi audio adalah 5.00 detik dengan toleransi 0.05 detik.
+
+## Visual Matching
+
+Plan 2 tidak boleh mengisi kekurangan durasi menggunakan clip acak. Prioritas pengisian durasi:
+
+1. Tambahkan clip lain yang memiliki `visual_cue` sama atau masih berkaitan.
+2. Gunakan `baref`.
+3. Gunakan slow motion secara terbatas.
+4. Gunakan freeze frame untuk momen penekanan.
+5. Gunakan reaction shot atau establishing shot yang relevan.
+
+Jika narasi berpindah dari karakter gemuk ke karakter kurus, segment dan clip juga harus berpindah pada batas audio yang sama. Clip karakter kurus tidak boleh muncul ketika audio masih menjelaskan karakter gemuk.
+
+## Sync Planner
+
+Untuk setiap segment, backend menghitung:
+
+```text
+target = audio_duration
+actual = jumlah seluruh out clip
+error = abs(target - actual)
+```
+
+Segment valid jika:
+
+```text
+error <= 0.05 detik
+```
+
+Jika `actual` kurang, backend memilih clip relevan tambahan atau transform yang sesuai. Jika `actual` berlebih, backend memangkas clip terakhir atau menyesuaikan transform. Jika tidak dapat memenuhi durasi tanpa merusak makna, proses berhenti dengan warning/error yang jelas.
+
+## Timeline Final
+
+Timeline video dan audio dibentuk dari segment yang sama:
+
+```text
+00:00.00 - 00:03.42  audio segment 1 + visual fat-character
+00:03.42 - 00:07.60  audio segment 2 + visual thin-character
+```
+
+Video tidak boleh dirender sebagai satu rangkaian clip terlebih dahulu lalu audio ditambahkan tanpa perhitungan ulang. Setiap batas pergantian visual harus mengikuti batas segment audio.
+
+## Validasi Audio-Visual
+
+Setelah render, backend wajib memeriksa:
+
+- jumlah segment audio dan video sama;
+- durasi video tiap segment sesuai durasi audio;
+- total durasi audio dan video berada dalam toleransi;
+- urutan segment tidak berubah;
+- visual cue setiap clip sesuai segment;
+- tidak ada clip dengan `src > 3.0`;
+- audio narration terdengar pada bagian video yang benar.
+
+Output final sekarang:
+
+```text
+storytelling.mp4
+```
+
+Jika diperlukan preview tanpa audio, backend boleh menyimpan:
+
+```text
+storytelling_no_audio.mp4
+```
+
+Audio TTS final harus berasal dari penggabungan seluruh audio segment dengan urutan storyboard yang sama.
+
+---
+
+# 46. Konsumsi TTS Preflight Plan 1
+
+Jika `storyboard.json` memiliki `segments[].audio_file` dan `segments[].audio_duration`, Plan 2 wajib memakai file `voiceover.mp3` dan audio segment yang sudah dibuat Plan 1.
+
+Plan 2 tidak boleh membuat ulang TTS karena hasil generate ulang dapat memiliki durasi berbeda dan menggeser batas visual.
+
+Durasi visual dihitung per segment:
+
+```text
+target segment = segment.audio_duration
+actual segment = jumlah out klip segment
+scale = target segment / actual segment
+```
+
+`scale` hanya digunakan untuk menyesuaikan hasil transform video. Urutan segment tetap sama dan setiap segment hanya boleh memakai klip yang relevan dengan `visual_cue`-nya.
+
+Jika preflight tidak tersedia, Plan 2 boleh memakai fallback TTS lama per section, tetapi status render harus diberi warning bahwa sinkronisasi segment belum presisi.

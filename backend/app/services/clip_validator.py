@@ -5,12 +5,17 @@ Tiga tanggung jawab:
 2. Normalization — hitung `out` dari `trx` kalau AI salah, clamp `src`, dedupe timestamp.
 3. Duration solve — sesuaikan visual vs voice-over memakai prioritas transform.
 """
+import math
 from typing import Dict, List, Optional, Tuple
 
 from app.schemas.storyboard import Clip, Section, Storyboard
 
 MAX_SRC = 3.0
 MIN_SRC = 0.4
+# Batas keras durasi hasil satu unit visual. Slow motion tidak boleh dipakai
+# untuk mengubah satu klip menjadi 5-7 detik; durasi panjang harus terdiri dari
+# beberapa klip.
+MAX_RENDERED_CLIP = 3.0
 
 # out = f(src, trx). baref_identity, fz12 freeze, slow = src / speed
 TRANSFORM_SPEED: Dict[str, Optional[float]] = {
@@ -63,7 +68,16 @@ def normalize_clip(clip: Clip) -> Clip:
     # out: recompute dari trx supaya konsisten (AI sering salah hitung)
     out = out_for(src, trx)
 
-    return Clip(clip_id=clip.clip_id, beat=beat, start=clip.start, src=round(src, 1), trx=trx, out=out)
+    return Clip(
+        clip_id=clip.clip_id,
+        beat=beat,
+        start=clip.start,
+        src=round(src, 1),
+        trx=trx,
+        out=out,
+        visual_hint=clip.visual_hint,
+        verification=clip.verification,
+    )
 
 
 def clamp_to_timeline(start: str, timeline_start: float, timeline_end: float, parser) -> str:
@@ -122,6 +136,147 @@ def validate_section(
     section.clip_count = len(section.clips)
     section.total_clip_duration = round(sum(c.out for c in section.clips), 1)
     return section, issues
+
+
+def sync_segments_from_sections(sb: Storyboard) -> Storyboard:
+    """Hubungkan segment ke clip yang sudah dinormalisasi di section.
+
+    Builder menerima format Gemini baru (segments) dan format lama
+    (section.clips). Validasi hanya mengubah clip pada section, sehingga
+    segment harus disegarkan agar Plan 2 tidak membaca timestamp/src lama.
+    """
+    # storyboard.json menyimpan segment dalam dua bentuk (nested untuk UI dan
+    # flattened untuk Plan 2). Setelah TTS, metadata audio biasanya hanya
+    # berubah di flattened list; bawa metadata itu kembali ke nested list
+    # sebelum membangun canonical list baru.
+    metadata_by_id = {
+        int(segment.segment_id): (segment.audio_file, segment.audio_duration, segment.sync_status)
+        for segment in (sb.segments or [])
+    }
+    for section in sb.sections:
+        by_id = {clip.clip_id: clip for clip in section.clips}
+        for segment in section.segments:
+            segment.clips = [by_id[c.clip_id] for c in segment.clips if c.clip_id in by_id]
+            meta = metadata_by_id.get(int(segment.segment_id))
+            if meta:
+                segment.audio_file, segment.audio_duration, segment.sync_status = meta
+            segment.visual_duration = round(sum(c.out for c in segment.clips), 1)
+    sb.segments = [segment for section in sb.sections for segment in section.segments]
+    for idx, segment in enumerate(sb.segments, start=1):
+        segment.segment_id = idx
+    return sb
+
+
+def enforce_segment_clip_budget(
+    sb: Storyboard,
+    wpm: int = 150,
+    use_audio_duration: bool = True,
+) -> List[str]:
+    """Pastikan setiap segment punya klip cukup untuk menutup durasinya.
+
+    Gemini kadang mengirim satu klip untuk narasi 6-10 detik. Sebelumnya
+    renderer mengatasi ini dengan speed/freeze sehingga satu klip bisa menjadi
+    5-7 detik. Itu melanggar aturan visual dan membuat adegan terasa macet.
+
+    Fungsi ini murni lokal (tanpa request Gemini): jumlah klip minimum dihitung
+    dari ceil(durasi / 3). Jika output AI masih kurang, klip yang sudah
+    relevan dipakai sebagai fallback berulang, masing-masing tetap <= 3 detik.
+    Pada output normal Gemini seharusnya sudah mengirim timestamp berbeda;
+    fallback ini hanya menjaga invariant durasi agar pipeline tidak rusak.
+    """
+    issues: List[str] = []
+    def clone_start(start: str, offset_ms: int) -> str:
+        """Buat anchor unik tanpa memindahkan klip keluar adegan."""
+        try:
+            parts = str(start).split(":")
+            base = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+            value = base + (offset_ms / 1000.0)
+            whole = int(value)
+            millis = int(round((value - whole) * 1000))
+            if millis >= 1000:
+                whole += 1
+                millis = 0
+            return (
+                f"{whole // 3600:02d}:{(whole % 3600) // 60:02d}:"
+                f"{whole % 60:02d}.{millis:03d}"
+            )
+        except (TypeError, ValueError, IndexError):
+            return str(start)
+
+    next_id = max(
+        [int(c.clip_id or 0) for section in sb.sections for c in section.clips] or [0]
+    ) + 1
+
+    for section in sb.sections:
+        for segment in section.segments:
+            if not segment.clips:
+                issues.append(f"segment {segment.segment_id}: tidak memiliki klip visual")
+                continue
+
+            estimated = (len(segment.text.split()) / max(1, wpm)) * 60.0
+            target = (
+                float(segment.audio_duration)
+                if use_audio_duration and segment.audio_duration
+                else estimated
+            )
+            target = max(target, 0.05)
+            required = max(1, math.ceil(target / MAX_RENDERED_CLIP))
+
+            # Normalisasi output terlebih dahulu. Transform lambat boleh tetap
+            # dipakai hanya jika hasil akhirnya tidak melewati 3 detik.
+            for clip in segment.clips:
+                if float(clip.out or 0) > MAX_RENDERED_CLIP:
+                    clip.trx = "baref"
+                    clip.out = out_for(float(clip.src), "baref")
+
+            if len(segment.clips) < required:
+                original = list(segment.clips)
+                missing = required - len(original)
+                issues.append(
+                    f"segment {segment.segment_id}: {len(original)} klip -> {required} klip "
+                    f"untuk durasi {target:.1f}s"
+                )
+                for idx in range(missing):
+                    source = original[idx % len(original)].model_copy(deep=True)
+                    source.clip_id = next_id
+                    next_id += 1
+                    source.start = clone_start(source.start, idx + 1)
+                    source.trx = "baref"
+                    source.src = MAX_SRC
+                    source.out = MAX_RENDERED_CLIP
+                    segment.clips.append(source)
+                    section.clips.append(source)
+
+            # Bila source AI terlalu pendek, gunakan unit 3 detik agar jumlah
+            # klip yang sudah ditentukan benar-benar mampu menutup target.
+            # Ini tetap lebih aman daripada satu klip yang di-stretch 7 detik.
+            if sum(float(c.out or 0) for c in segment.clips) < target:
+                for clip in segment.clips:
+                    clip.trx = "baref"
+                    clip.src = MAX_SRC
+                    clip.out = MAX_RENDERED_CLIP
+                    if sum(float(c.out or 0) for c in segment.clips) >= target:
+                        break
+
+            segment.visual_duration = round(
+                sum(min(float(c.out or 0), MAX_RENDERED_CLIP) for c in segment.clips), 1
+            )
+
+    # Rebuild flattened list, but jangan mengubah clip menjadi referensi lama
+    # yang kehilangan klip fallback.
+    sb.segments = [segment for section in sb.sections for segment in section.segments]
+    for idx, segment in enumerate(sb.segments, start=1):
+        segment.segment_id = idx
+    for section in sb.sections:
+        section.clip_count = len(section.clips)
+        section.total_clip_duration = round(
+            sum(min(float(c.out or 0), MAX_RENDERED_CLIP) for c in section.clips), 1
+        )
+    sb.summary.total_clips = sum(len(section.clips) for section in sb.sections)
+    sb.summary.total_clip_duration = round(
+        sum(section.total_clip_duration for section in sb.sections), 1
+    )
+    return issues
 
 
 def solve_durations(
