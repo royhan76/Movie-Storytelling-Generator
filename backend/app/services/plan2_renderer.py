@@ -22,10 +22,11 @@ from app.services.tts_service import (
     build_cinematic_audio,
     generate_storyboard_tts_sections,
     generate_tts_sync,
+    insert_intro_audio,
     insert_audio_silence,
     merge_audio_video,
 )
-from app.services.video_prober import probe_video
+from app.services.video_prober import probe_audio, probe_video
 from app.services.video_processor import FFmpegProcessor, parse_timestamp_sec
 
 
@@ -41,6 +42,7 @@ class Plan2Renderer:
         voice: str = "id-ID-ArdiNeural",
         include_tts: bool = True,
         intro_path: Optional[Path] = None,
+        crop_percent: float = 0.0,
         progress: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Jalankan pipeline render Plan 2 penuh (video + tts presisi per-section + merge audio) dengan resume/retry."""
@@ -179,7 +181,7 @@ class Plan2Renderer:
         target_total_duration = sum(c["out_sec"] for c in flat_clips)
         if intro_meta:
             target_total_duration += float(intro_meta["duration"])
-        target_total_duration += sum(min(float(br.duration), 3.0) for br in cinematic_breaks)
+        target_total_duration += sum(min(float(br.duration), 2.0) for br in cinematic_breaks)
         emit(
             "validate_storyboard",
             phase="done",
@@ -204,6 +206,7 @@ class Plan2Renderer:
             target_fps=30.0,
             preset="medium",
             crf=20,
+            crop_bottom=crop_percent,
         )
 
         processed_paths: List[Path] = []
@@ -228,7 +231,10 @@ class Plan2Renderer:
                 trx=item["trx"],
             )
 
-            cache_sig = f"done_{item['out_sec']:.2f}_{item['trx']}_{item['src_sec']:.2f}"
+            # Naikkan versi cache agar clip hasil renderer lama (sebelum
+            # tpad+trim exact duration) tidak dipakai ulang saat rerender.
+            crop_tag = f"crop{crop_percent:.1f}" if crop_percent > 0 else "full"
+            cache_sig = f"render_v3_{crop_tag}_{item['out_sec']:.2f}_{item['trx']}_{item['src_sec']:.2f}"
 
             # Check if clip is already completed (resume support with parameter signature matching)
             if state.get(clip_key) in ("done", cache_sig) and state.get(clip_key) == cache_sig and proc_path.exists() and proc_path.stat().st_size > 0:
@@ -299,15 +305,15 @@ class Plan2Renderer:
             processor.extract_source_clip(
                 video_path=video_path,
                 start_sec=parse_timestamp_sec(br.start),
-                src_sec=min(float(br.src), 3.0),
+                src_sec=min(float(br.src), 2.0),
                 output_path=break_source,
             )
             processor.process_and_transform_clip(
                 source_clip_path=break_source,
                 output_clip_path=break_output,
                 trx="baref",
-                src_duration=min(float(br.src), 3.0),
-                target_out_duration=min(float(br.duration), 3.0),
+                src_duration=min(float(br.src), 2.0),
+                target_out_duration=min(float(br.duration), 2.0),
             )
             break_paths[int(br.after_segment_id)] = break_output
 
@@ -384,15 +390,16 @@ class Plan2Renderer:
             if hook_audio_duration <= 0:
                 hook_audio_duration = float(section_audio_durations.get(0, 0.0))
             hook_break_duration = sum(
-                min(float(br.duration), 3.0)
+                min(float(br.duration), 2.0)
                 for section in storyboard.sections
                 if section.section_id == 0
                 for br in getattr(section, "cinematic_breaks", [])
             )
-            audio_for_merge = insert_audio_silence(
+            audio_for_merge = insert_intro_audio(
                 audio_path=audio_for_merge,
                 before_main_sec=hook_audio_duration + hook_break_duration,
-                silence_sec=float(intro_meta["duration"]),
+                intro_video_path=Path(intro_path),
+                intro_duration=float(intro_meta["duration"]),
                 output_path=proj_dir / "voiceover_with_intro_silence.mp3",
             )
 
@@ -412,6 +419,12 @@ class Plan2Renderer:
         final_meta = probe_video(final_video_path)
 
         actual_duration = final_meta["duration"]
+        audio_duration = None
+        if include_tts and audio_for_merge and audio_for_merge.exists():
+            try:
+                audio_duration = float(probe_audio(audio_for_merge)["duration"])
+            except Exception:
+                audio_duration = None
         elapsed_sec = round(time.time() - started_at, 1)
 
         diff_pct = abs(actual_duration - target_total_duration) / target_total_duration * 100.0 if target_total_duration > 0 else 0.0
@@ -421,6 +434,7 @@ class Plan2Renderer:
             "source_video": video_meta["filename"],
             "intro_video": intro_meta["filename"] if intro_meta else None,
             "intro_duration_sec": round(float(intro_meta["duration"]), 1) if intro_meta else 0.0,
+            "crop_percent": crop_percent,
             "total_clips": total_clips,
             "target_duration_sec": round(target_total_duration, 1),
             "actual_duration_sec": round(actual_duration, 1),
@@ -428,6 +442,8 @@ class Plan2Renderer:
             "resolution": f"{final_meta['width']}x{final_meta['height']}",
             "fps": final_meta["fps"],
             "has_audio": final_meta["has_audio"],
+            "audio_duration_sec": round(audio_duration, 1) if audio_duration is not None else None,
+            "av_duration_diff_sec": round(abs(actual_duration - audio_duration), 1) if audio_duration is not None else None,
             "output_file": final_video_path.name,
             "output_path": str(final_video_path),
             "elapsed_sec": elapsed_sec,

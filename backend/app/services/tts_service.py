@@ -173,6 +173,38 @@ def insert_audio_silence(
     return output_path
 
 
+def insert_intro_audio(
+    audio_path: Path,
+    before_main_sec: float,
+    intro_video_path: Path,
+    intro_duration: float,
+    output_path: Path,
+) -> Path:
+    """Sisipkan audio asli intro di antara audio hook dan main narration."""
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        raise RuntimeError("Binary 'ffmpeg' tidak ditemukan di PATH sistem.")
+    output_path = Path(output_path).resolve()
+    work_dir = output_path.parent / "intro_audio_parts"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    hook = work_dir / "hook.mp3"
+    intro = work_dir / "intro.mp3"
+    main = work_dir / "main.mp3"
+    for start, duration, source, target in (
+        (0.0, before_main_sec, audio_path, hook),
+        (0.0, intro_duration, intro_video_path, intro),
+        (before_main_sec, 0.0, audio_path, main),
+    ):
+        cmd = [ffmpeg_bin, "-y", "-ss", f"{start:.3f}", "-i", str(source)]
+        if duration > 0:
+            cmd.extend(["-t", f"{duration:.3f}"])
+        cmd.extend(["-vn", "-c:a", "libmp3lame", "-q:a", "2", str(target)])
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        if res.returncode != 0 or not target.exists() or target.stat().st_size == 0:
+            raise RuntimeError(f"FFmpeg gagal mengambil audio intro: {res.stderr}")
+    return concat_audio_files([hook, intro, main], output_path)
+
+
 def build_cinematic_audio(
     storyboard: Any,
     source_video: Path,
@@ -186,11 +218,14 @@ def build_cinematic_audio(
     segments = list(getattr(storyboard, "segments", []) or [])
     if not segments or not all(getattr(s, "audio_file", None) for s in segments):
         return None
-    breaks = {
-        int(br.after_segment_id): br
+    break_list = [
+        br
         for section in getattr(storyboard, "sections", []) or []
         for br in getattr(section, "cinematic_breaks", []) or []
-    }
+    ][:5]
+    # Harus sama dengan batas renderer; jika audio memasukkan lebih banyak
+    # break daripada video, drift kumulatif tidak bisa dihindari.
+    breaks = {int(br.after_segment_id): br for br in break_list}
     if not breaks:
         return None
 
@@ -208,7 +243,7 @@ def build_cinematic_audio(
         break_audio = work_dir / f"break_{int(segment.segment_id):04d}.mp3"
         cmd = [
             ffmpeg_bin, "-y", "-ss", str(parse_timestamp_for_audio(br.start)),
-            "-i", str(source_video), "-t", f"{min(float(br.duration), 3.0):.3f}",
+            "-i", str(source_video), "-t", f"{min(float(br.duration), 2.0):.3f}",
             "-vn", "-c:a", "libmp3lame", "-q:a", "2", str(break_audio),
         ]
         res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")

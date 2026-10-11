@@ -514,7 +514,7 @@ ATURAN CLIP BLUEPRINT:
 1. Setiap clip punya: beat, start, src, trx, out.
 2. beat = lowercase-kebab-case (contoh: walk, run, confront, silent-stare, weapon-aim, embrace, child, photo-memory).
 3. start HARUS diambil dari timestamp subtitle (HH:MM:SS) yang relevan dengan narasi di atas.
-4. src = durasi sumber, WAJIB 0 < src <= 3.0. JANGAN pernah lebih dari 3 detik.
+4. src = durasi sumber, WAJIB 0 < src <= 2.0. JANGAN pernah lebih dari 2 detik.
 5. trx hanya boleh: baref, fz12, s65, s50, s35.
 6. out = durasi hasil SETELAH transform:
    - baref -> out = src
@@ -531,14 +531,15 @@ ATURAN SEGMENT SINKRONISASI AUDIO-VISUAL:
 1. Pecah `voice_over` menjadi beberapa `segments`; satu segment hanya boleh memuat satu gagasan visual.
 2. Jika narasi berpindah dari kondisi A ke B (misalnya karakter gemuk menjadi kurus), WAJIB buat segment baru.
 3. Setiap segment wajib memiliki `segment_id`, `text`, `visual_cue`, dan daftar `clips` yang relevan.
-4. Satu segment boleh memiliki beberapa clip; setiap `src` tetap maksimal 3 detik.
-5. Jumlah clip WAJIB minimal `ceil(perkiraan_durasi_narasi / 3)`. Narasi 17 detik harus memiliki minimal 6 clip; narasi 6-8 detik minimal 2-3 clip.
-6. `out` setiap clip juga WAJIB <= 3 detik. DILARANG memperpanjang satu clip menjadi 5-7 detik dengan slow motion atau freeze.
+4. Satu segment boleh memiliki beberapa clip; setiap `src` tetap maksimal 2 detik.
+5. Jumlah clip WAJIB minimal `ceil(perkiraan_durasi_narasi / 2)`. Narasi 17 detik harus memiliki minimal 9 clip; narasi 6-8 detik minimal 3-4 clip.
+6. `out` setiap clip juga WAJIB <= 2 detik. Slow motion atau freeze hanya boleh menjadi penyesuaian kecil; jangan memperpanjang satu clip menjadi shot panjang.
 7. `audio_duration` belum diketahui sebelum TTS, jadi isi `audio_duration` dengan null dan gunakan jumlah kata sebagai perkiraan durasi.
 8. Jangan memasukkan clip dari kondisi visual lain hanya untuk mengisi durasi.
 9. Untuk maksimal 5 momen paling epic, boleh tambahkan `cinematic_breaks` pada section.
-10. Setiap cinematic break wajib memiliki `after_segment_id`, `start`, `src`, `duration`, dan `reason`; `src` serta `duration` maksimal 3 detik.
+10. Setiap cinematic break wajib memiliki `after_segment_id`, `start`, `src`, `duration`, dan `reason`; `src` serta `duration` maksimal 2 detik.
 11. Cinematic break hanya untuk benturan, ledakan, reveal, atau klimaks penting. Saat break, narator berhenti dan audio asli film terdengar.
+12. DILARANG memilih klip dari end credits, daftar pemain, nama sutradara, nama kru, logo produksi, atau kartu teks penutup. Klip harus berasal dari adegan cerita yang mendukung kalimat narasi.
 
 ATURAN OUTPUT:
 - Output HARUS JSON valid, tanpa teks lain.
@@ -567,7 +568,7 @@ CLIP BLUEPRINT RULES:
 1. Every clip has: beat, start, src, trx, out.
 2. beat = lowercase-kebab-case (e.g., walk, run, confront, silent-stare, weapon-aim, embrace, child, photo-memory).
 3. start MUST be taken from subtitle timestamps (HH:MM:SS).
-4. src = source duration, MUST be 0 < src <= 3.0. NEVER exceed 3 seconds.
+4. src = source duration, MUST be 0 < src <= 2.0. NEVER exceed 2 seconds.
 5. trx can only be: baref, fz12, s65, s50, s35.
 6. out = duration result AFTER transform:
    - baref -> out = src
@@ -584,14 +585,15 @@ AUDIO-VISUAL SEGMENT RULES:
 1. Split `voice_over` into `segments`; each segment contains one visual idea.
 2. If narration changes from state A to state B (for example fat character becomes thin), create a new segment.
 3. Each segment must contain `segment_id`, `text`, `visual_cue`, and relevant `clips`.
-4. A segment may contain multiple clips; each `src` must remain at most 3 seconds.
-5. Minimum clip count is `ceil(estimated_narration_duration / 3)`. A 17-second narration needs at least 6 clips; a 6-8 second narration needs at least 2-3 clips.
-6. Each clip `out` MUST also be <= 3 seconds. NEVER stretch one clip to 5-7 seconds using slow motion or freeze.
+4. A segment may contain multiple clips; each `src` must remain at most 2 seconds.
+5. Minimum clip count is `ceil(estimated_narration_duration / 2)`. A 17-second narration needs at least 9 clips; a 6-8 second narration needs at least 3-4 clips.
+6. Each clip `out` MUST also be <= 2 seconds. Slow motion or freeze may only make a small adjustment; NEVER stretch one clip into a long shot.
 7. `audio_duration` is unknown before TTS, so set it to null and estimate from word count.
 8. Never add an unrelated clip just to fill duration.
 9. For up to 5 truly epic moments, a section may include `cinematic_breaks`.
-10. Each break must have `after_segment_id`, `start`, `src`, `duration`, and `reason`; both `src` and `duration` must be at most 3 seconds.
+10. Each break must have `after_segment_id`, `start`, `src`, `duration`, and `reason`; both `src` and `duration` must be at most 2 seconds.
 11. Use breaks only for impact, explosion, reveal, or major climax. The narrator pauses while the original movie audio plays.
+12. NEVER choose clips from end credits, cast lists, director/crew names, production logos, or closing title cards. Clips must come from story scenes that support the narration.
 
 OUTPUT RULES:
 - Output MUST be valid JSON, with no markdown fences or extra text.

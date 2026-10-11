@@ -1,21 +1,22 @@
 """Validasi + perbaikan storyboard hasil Gemini.
 
 Tiga tanggung jawab:
-1. Hard validation — src <= 3.0, trx valid, out > 0, start dalam timeline subtitle.
+1. Hard validation — src <= 2.0, trx valid, out > 0, start dalam timeline subtitle.
 2. Normalization — hitung `out` dari `trx` kalau AI salah, clamp `src`, dedupe timestamp.
 3. Duration solve — sesuaikan visual vs voice-over memakai prioritas transform.
 """
 import math
+import re
 from typing import Dict, List, Optional, Tuple
 
 from app.schemas.storyboard import Clip, Section, Storyboard
 
-MAX_SRC = 3.0
+MAX_SRC = 2.0
 MIN_SRC = 0.4
 # Batas keras durasi hasil satu unit visual. Slow motion tidak boleh dipakai
 # untuk mengubah satu klip menjadi 5-7 detik; durasi panjang harus terdiri dari
 # beberapa klip.
-MAX_RENDERED_CLIP = 3.0
+MAX_RENDERED_CLIP = 2.0
 
 # out = f(src, trx). baref_identity, fz12 freeze, slow = src / speed
 TRANSFORM_SPEED: Dict[str, Optional[float]] = {
@@ -55,7 +56,7 @@ def normalize_clip(clip: Clip) -> Clip:
     # trx: hanya kode yang diizinkan
     trx = clip.trx if clip.trx in TRANSFORM_SPEED else "baref"
 
-    # src: 0 < src <= 3.0
+    # src: 0 < src <= 2.0
     try:
         src = float(clip.src)
     except (TypeError, ValueError):
@@ -77,7 +78,21 @@ def normalize_clip(clip: Clip) -> Clip:
         out=out,
         visual_hint=clip.visual_hint,
         verification=clip.verification,
+        subtitle_ref=clip.subtitle_ref,
     )
+
+
+CREDIT_MARKERS = (
+    "directed by", "director", "written by", "produced by", "producer",
+    "starring", "cast", "credits", "music by", "executive producer",
+    "sutradara", "pemain", "pemeran", "produser", "disutradarai",
+    "字幕", "导演", "演员", "制片",
+)
+
+
+def _looks_like_credit(text: str) -> bool:
+    value = str(text or "").lower()
+    return any(marker in value for marker in CREDIT_MARKERS)
 
 
 def clamp_to_timeline(start: str, timeline_start: float, timeline_end: float, parser) -> str:
@@ -99,6 +114,7 @@ def validate_section(
     timeline_start: float,
     timeline_end: float,
     seen_starts: set,
+    timeline: Optional[List[Dict]] = None,
 ) -> Tuple[Section, List[str]]:
     """Normalisasi + validasi satu section. Return (section, issues)."""
     issues: List[str] = []
@@ -107,6 +123,21 @@ def validate_section(
 
     for raw in section.clips:
             clip = normalize_clip(raw)
+
+            # Jangan mengambil frame credits sebagai visual cerita. subtitle_ref
+            # membuat pemeriksaan ini presisi tanpa menebak dari timestamp saja.
+            if timeline and clip.subtitle_ref:
+                cue = next((x for x in timeline if int(x.get("i", -1)) == clip.subtitle_ref), None)
+                if cue and _looks_like_credit(cue.get("text", "")):
+                    issues.append(
+                        f"section {section.section_id}: clip {clip.clip_id} dibuang karena subtitle_ref credits"
+                    )
+                    continue
+            if _looks_like_credit(f"{clip.beat} {clip.visual_hint}"):
+                issues.append(
+                    f"section {section.section_id}: clip {clip.clip_id} dibuang karena visual credits"
+                )
+                continue
 
             # clamp ke timeline DULU, baru cek duplikat — kalau dibalik, dua start
             # berbeda bisa sama-sama di-clamp ke batas lalu lolos sebagai "unik"
@@ -179,8 +210,8 @@ def enforce_segment_clip_budget(
     5-7 detik. Itu melanggar aturan visual dan membuat adegan terasa macet.
 
     Fungsi ini murni lokal (tanpa request Gemini): jumlah klip minimum dihitung
-    dari ceil(durasi / 3). Jika output AI masih kurang, klip yang sudah
-    relevan dipakai sebagai fallback berulang, masing-masing tetap <= 3 detik.
+    dari ceil(durasi / 2). Jika output AI masih kurang, klip yang sudah
+    relevan dipakai sebagai fallback berulang, masing-masing tetap <= 2 detik.
     Pada output normal Gemini seharusnya sudah mengirim timestamp berbeda;
     fallback ini hanya menjaga invariant durasi agar pipeline tidak rusak.
     """
@@ -222,8 +253,8 @@ def enforce_segment_clip_budget(
             target = max(target, 0.05)
             required = max(1, math.ceil(target / MAX_RENDERED_CLIP))
 
-            # Normalisasi output terlebih dahulu. Transform lambat boleh tetap
-            # dipakai hanya jika hasil akhirnya tidak melewati 3 detik.
+            # Normalisasi output terlebih dahulu. Transform lambat/freezer
+            # hanya dipakai jika hasil akhirnya tetap <= 2 detik.
             for clip in segment.clips:
                 if float(clip.out or 0) > MAX_RENDERED_CLIP:
                     clip.trx = "baref"
@@ -247,7 +278,7 @@ def enforce_segment_clip_budget(
                     segment.clips.append(source)
                     section.clips.append(source)
 
-            # Bila source AI terlalu pendek, gunakan unit 3 detik agar jumlah
+            # Bila source AI terlalu pendek, gunakan unit 2 detik agar jumlah
             # klip yang sudah ditentukan benar-benar mampu menutup target.
             # Ini tetap lebih aman daripada satu klip yang di-stretch 7 detik.
             if sum(float(c.out or 0) for c in segment.clips) < target:

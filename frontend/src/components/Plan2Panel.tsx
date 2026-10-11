@@ -21,10 +21,12 @@ export function Plan2Panel({ currentProjectId }: Plan2PanelProps) {
   const [voices, setVoices] = useState<TtsVoice[]>([])
   const [selectedVoice, setSelectedVoice] = useState<string>("id-ID-ArdiNeural")
   const [includeTts, setIncludeTts] = useState<boolean>(true)
+  const [cropPercent, setCropPercent] = useState<number>(0)
   const [selectedProjectId, setSelectedProjectId] = useState<string>(
     currentProjectId || "",
   )
   const [videoFile, setVideoFile] = useState<File | null>(null)
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string>("")
   const [introVideoFile, setIntroVideoFile] = useState<File | null>(null)
   const [videoPath, setVideoPath] = useState<string>("")
   const [rendering, setRendering] = useState<boolean>(false)
@@ -82,6 +84,7 @@ export function Plan2Panel({ currentProjectId }: Plan2PanelProps) {
         videoPath.trim() || undefined,
         selectedVoice,
         includeTts,
+        cropPercent,
         (status) => setProgressStatus(status),
       )
       const isWithAudio = finalStatus.report?.has_audio ?? includeTts
@@ -143,9 +146,13 @@ export function Plan2Panel({ currentProjectId }: Plan2PanelProps) {
                 type="file"
                 accept="video/*,.mp4,.mkv,.mov,.avi,.webm"
                 onChange={(e) => {
-                  if (e.target.files?.[0]) {
-                    setVideoFile(e.target.files[0])
-                  }
+                  const file = e.target.files?.[0]
+                  if (!file) return
+                  setVideoFile(file)
+                  setVideoPreviewUrl((previous) => {
+                    if (previous) URL.revokeObjectURL(previous)
+                    return URL.createObjectURL(file)
+                  })
                 }}
                 disabled={rendering}
                 className="bg-slate-800 border-slate-700 text-slate-200 cursor-pointer"
@@ -182,9 +189,48 @@ export function Plan2Panel({ currentProjectId }: Plan2PanelProps) {
                 className="bg-slate-800 border-slate-700 text-slate-200 cursor-pointer"
               />
               <p className="text-xs text-slate-500 mt-1">
-                Audio intro dimatikan dan voice-over diberi jeda sesuai durasi intro.
+                Audio asli intro tetap dipertahankan dan ditempatkan di antara hook dan video utama.
               </p>
             </div>
+          </div>
+
+          {/* Manual Crop + Preview */}
+          <div className="space-y-2 pt-3 border-t border-slate-800">
+            <label className="block text-sm font-medium text-amber-300">
+              Crop bagian bawah video (%)
+            </label>
+            <div className="flex items-center gap-3">
+              <Input
+                type="number"
+                min={0}
+                max={40}
+                step={0.5}
+                value={cropPercent}
+                onChange={(e) =>
+                  setCropPercent(Math.max(0, Math.min(40, Number(e.target.value) || 0)))
+                }
+                disabled={rendering}
+                className="w-32 bg-slate-800 border-slate-700 text-slate-200"
+              />
+              <span className="text-xs text-slate-500">0 = tanpa crop, maksimal 40%</span>
+            </div>
+            <p className="text-xs text-slate-500">
+              Preview memakai video utama yang di-upload dan memotong area bawah sesuai nilai di atas.
+            </p>
+            {videoPreviewUrl && (
+              <div className="relative aspect-video bg-black rounded-md overflow-hidden border border-slate-700">
+                <video
+                  controls
+                  muted
+                  src={videoPreviewUrl}
+                  className="w-full h-full object-contain"
+                  style={{ clipPath: `inset(0 0 ${cropPercent}% 0)` }}
+                />
+                <span className="absolute bottom-2 left-2 rounded bg-black/70 px-2 py-1 text-xs text-amber-300">
+                  Preview crop bawah: {cropPercent}%
+                </span>
+              </div>
+            )}
           </div>
 
           {/* TTS Voice Selector (1-Click Integration) */}

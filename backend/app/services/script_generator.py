@@ -214,7 +214,9 @@ class StoryPipeline:
             seen: set = set()
             all_issues: List[str] = []
             for section in candidate.sections:
-                _, issues = validate_section(section, self.parser, timeline_start, timeline_end, seen)
+                _, issues = validate_section(
+                    section, self.parser, timeline_start, timeline_end, seen, timeline=timeline
+                )
                 all_issues.extend(issues)
 
             candidate = sync_segments_from_sections(candidate)

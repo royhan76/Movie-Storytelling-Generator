@@ -186,12 +186,14 @@ export async function renderPlan2Video(
   videoPath?: string,
   voice: string = "id-ID-ArdiNeural",
   includeTts: boolean = true,
+  cropPercent: number = 0,
   onProgress?: (status: Plan2JobStatus) => void,
 ): Promise<Plan2JobStatus> {
   const body = new FormData()
   body.append("project_id", projectId)
   body.append("voice", voice)
   body.append("include_tts", String(includeTts))
+  body.append("crop_percent", String(cropPercent))
   if (videoFile) {
     body.append("video", videoFile)
   } else if (videoPath) {

@@ -1,6 +1,6 @@
 """Skema data Plan 1.
 
-Catatan: constraint `src <= 3.0` (PLAN1.md §11) sengaja TIDAK dipasang di
+Catatan: constraint `src <= 2.0` (PLAN1.md §11) sengaja TIDAK dipasang di
 skema, karena output Gemini sering violate dan harus bisa dinormalisasi oleh
 `clip_validator.normalize_clip`, bukan crash saat parsing. Penegakan aturan
 occur di service layer, dan hasil akhir selalu dijamin <= 3.0.
@@ -18,12 +18,13 @@ class Clip(BaseModel):
     clip_id: int | None = None
     beat: str = Field(default="unknown", description="lowercase-kebab-case")
     start: str = Field(default="00:00:00", description="HH:MM:SS atau HH:MM:SS.mmm")
-    src: float = Field(default=2.0, description="durasi sumber, 0 < src <= 3.0 (ditegakkan validator)")
+    src: float = Field(default=2.0, description="durasi sumber, 0 < src <= 2.0 (ditegakkan validator)")
     # str (bukan Literal): trx di luar daftar harus dinormalisasi validator, bukan crash
     trx: str = "baref"
     out: float = Field(default=2.0, gt=0, description="durasi hasil setelah transform")
     visual_hint: str = ""
     verification: str = "required"
+    subtitle_ref: int | None = None
 
     @field_validator("beat")
     @classmethod

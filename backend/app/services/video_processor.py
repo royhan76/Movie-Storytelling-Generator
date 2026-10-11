@@ -53,6 +53,7 @@ class FFmpegProcessor:
         target_fps: float = 30.0,
         preset: str = "medium",
         crf: int = 20,
+        crop_bottom: float = 0.0,
     ) -> None:
         self.ffmpeg_bin = find_ffmpeg()
         self.target_width = target_width
@@ -60,6 +61,7 @@ class FFmpegProcessor:
         self.target_fps = target_fps
         self.preset = preset
         self.crf = crf
+        self.crop_bottom = max(0.0, min(float(crop_bottom), 40.0))
 
     def extract_source_clip(
         self,
@@ -114,8 +116,12 @@ class FFmpegProcessor:
         w, h, fps = self.target_width, self.target_height, self.target_fps
 
         # Base filter: scale & pad ke target resolution (letterbox jika rasio beda) + force fps + yuv420p
+        crop_filter = (
+            f"crop=iw:trunc(ih*(1-{self.crop_bottom / 100.0:.4f})/2)*2:0:0,"
+            if self.crop_bottom > 0 else ""
+        )
         scale_filter = (
-            f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+            f"{crop_filter}scale={w}:{h}:force_original_aspect_ratio=decrease,"
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
             f"fps={fps},"
             f"format=yuv420p"
@@ -138,7 +144,16 @@ class FFmpegProcessor:
                 pts_factor = 1.0 / speed_map.get(trx, 1.0)
             else:
                 pts_factor = 1.0
-            vf_chain.append(f"setpts={pts_factor:.4f}*PTS,{scale_filter}")
+            # Paksa durasi hasil benar-benar sama dengan target. Tanpa tpad +
+            # trim, sumber pendek/rounding FPS membuat setiap clip kehilangan
+            # beberapa frame; selisih kecil itu menjadi drift besar setelah
+            # ratusan clip.
+            exact_duration = max(0.05, float(target_out_duration or src_duration or 0.05))
+            vf_chain.append(
+                f"setpts={pts_factor:.4f}*PTS,{scale_filter},"
+                f"tpad=stop_mode=clone:stop_duration={exact_duration:.3f},"
+                f"trim=duration={exact_duration:.3f},setpts=PTS-STARTPTS"
+            )
 
         vf_str = ",".join(vf_chain)
 
@@ -218,8 +233,12 @@ class FFmpegProcessor:
         """Normalisasi video eksternal (mis. intro) ke format concat Plan 2."""
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        crop_filter = (
+            f"crop=iw:trunc(ih*(1-{self.crop_bottom / 100.0:.4f})/2)*2:0:0,"
+            if self.crop_bottom > 0 else ""
+        )
         scale_filter = (
-            f"scale={self.target_width}:{self.target_height}:force_original_aspect_ratio=decrease,"
+            f"{crop_filter}scale={self.target_width}:{self.target_height}:force_original_aspect_ratio=decrease,"
             f"pad={self.target_width}:{self.target_height}:(ow-iw)/2:(oh-ih)/2:black,"
             f"fps={self.target_fps},format=yuv420p"
         )

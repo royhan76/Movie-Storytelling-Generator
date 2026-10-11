@@ -415,8 +415,12 @@ async def plan2_render(
     project_id: str = Form(...),
     voice: str = Form("id-ID-ArdiNeural"),
     include_tts: bool = Form(True),
+    crop_percent: float = Form(0.0),
 ) -> Dict[str, Any]:
     """Mulai job render Plan 2 (potong video, transform, concat, TTS, dan merge audio)."""
+    if crop_percent < 0 or crop_percent > 40:
+        raise HTTPException(400, "Nilai crop harus antara 0 sampai 40 persen.")
+
     proj_folder = PROJECTS_DIR / project_id
     if not proj_folder.is_dir():
         raise HTTPException(404, f"Project '{project_id}' tidak ditemukan.")
@@ -470,6 +474,7 @@ async def plan2_render(
         "started_at": time.time(),
         "video_path": str(resolved_video_path),
         "intro_path": str(resolved_intro_path) if resolved_intro_path else None,
+        "crop_percent": crop_percent,
     }
 
     asyncio.create_task(
@@ -482,6 +487,7 @@ async def plan2_render(
             project_id,
             voice,
             include_tts,
+            crop_percent,
         )
     )
 
@@ -504,6 +510,7 @@ def _plan2_job_worker(
     project_id: str,
     voice: str = "id-ID-ArdiNeural",
     include_tts: bool = True,
+    crop_percent: float = 0.0,
 ) -> None:
     def progress(stage: str, data: Dict[str, Any]) -> None:
         job = _PLAN2_JOBS.get(job_id)
@@ -569,6 +576,7 @@ def _plan2_job_worker(
             project_id=project_id,
             voice=voice,
             include_tts=include_tts,
+            crop_percent=crop_percent,
             progress=progress,
         )
     except Exception as exc:

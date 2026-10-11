@@ -62,6 +62,11 @@ class StoryboardBuilder:
                 out=_safe_float(raw_clip.get("out"), src),
                 visual_hint=str(raw_clip.get("visual_hint") or ""),
                 verification=str(raw_clip.get("verification") or "required"),
+                subtitle_ref=(
+                    int(raw_clip.get("subtitle_ref"))
+                    if str(raw_clip.get("subtitle_ref") or "").isdigit()
+                    else None
+                ),
             )
             next_clip_id += 1
             return clip
@@ -128,8 +133,8 @@ class StoryboardBuilder:
                             break_id=int(item.get("break_id") or 0),
                             after_segment_id=int(item.get("after_segment_id") or 0),
                             start=str(item.get("start") or "00:00:00"),
-                            src=min(3.0, max(0.4, _safe_float(item.get("src"), 2.0))),
-                            duration=min(3.0, max(0.5, _safe_float(item.get("duration"), 2.0))),
+                            src=min(2.0, max(0.4, _safe_float(item.get("src"), 2.0))),
+                            duration=min(2.0, max(0.5, _safe_float(item.get("duration"), 2.0))),
                             reason=str(item.get("reason") or ""),
                             audio_mode="original",
                         )
